@@ -225,6 +225,16 @@ public sealed class PeerWatcher : IDisposable
                 (SyncDirection.Conflict, $"Both this PC and {peer.Label} have been played since they last matched."),
             Relation.Identical when remote.PlayedSinceLastCopy =>
                 (SyncDirection.ToPc, $"{peer.Label} has been played since these last matched."),
+
+            // Played HERE and nowhere else. This was missing, and it is half of the whole point:
+            // two copies at the same version are only "matching" until somebody plays one, and the
+            // machine that was played is the one that has to speak up. Without this a laptop played
+            // away from home came back, agreed with the desktop that everything matched, and let
+            // the evening's play sit there unsent - the exact failure this tool exists to prevent,
+            // reported as success.
+            Relation.Identical when localDirty =>
+                (SyncDirection.ToStick, $"This PC has been played since it last matched {peer.Label}."),
+
             Relation.Identical =>
                 (SyncDirection.UpToDate, "Both PCs match."),
 
