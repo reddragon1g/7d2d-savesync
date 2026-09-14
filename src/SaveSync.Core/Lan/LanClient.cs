@@ -349,6 +349,70 @@ public sealed class LanClient
         };
     }
 
+    /// <summary>
+    /// Sends one mod folder to another PC and asks it to install it.
+    ///
+    /// Two things about this are deliberate. It is one archive, so the far side either has the
+    /// whole mod or none of it. And it refuses by default to replace a mod already there - a PC
+    /// that has its own version of something is not a PC to overwrite without being told to.
+    /// </summary>
+    public async Task<(bool Ok, string Message)> PushModAsync(
+        LanPeer peer, string folder, string senderName, bool replaceExisting = false,
+        CancellationToken ct = default)
+    {
+        if (!Directory.Exists(folder)) return (false, $"There is no mod folder at {folder}.");
+
+        var name = new DirectoryInfo(folder).Name;
+
+        if (!await EnsurePairedAsync(peer, senderName, ct).ConfigureAwait(false))
+            return (false, $"Could not reach {peer.Label}.");
+
+        var secret = _config.FindPeer(peer.MachineId)?.Secret;
+        if (secret is null) return (false, $"Not paired with {peer.Label}.");
+
+        byte[] bytes;
+        string sha;
+        int fileCount;
+        try { (bytes, sha, fileCount) = ModDelivery.Pack(folder); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return (false, "Could not read the mod folder: " + e.Message);
+        }
+
+        if (fileCount == 0) return (false, "That mod folder is empty.");
+
+        try
+        {
+            using var client = await ConnectAsync(peer.Address, peer.Port, ct).ConfigureAwait(false);
+            await using var stream = client.GetStream();
+
+            using var body = new MemoryStream(bytes);
+
+            await LanProtocol.WriteMessageAsync(stream, new LanRequest
+            {
+                Op = "mod-install",
+                Secret = secret,
+                MachineId = _config.MachineId,
+                DisplayName = _config.DisplayName,
+                SenderName = senderName,
+                SaveLabel = name,
+                Sha256 = sha,
+                BodyBytes = bytes.Length,
+                FileCount = fileCount,
+                InstallAsName = replaceExisting ? "replace" : null,
+            }, body, bytes.Length, ct).ConfigureAwait(false);
+
+            var response = await LanProtocol.ReadHeaderAsync<LanResponse>(stream, ct).ConfigureAwait(false);
+            if (response is null) return (false, $"{peer.Label} did not answer.");
+
+            return (response.Ok, response.Ok ? response.Message ?? "Installed." : response.Error ?? "Refused.");
+        }
+        catch (Exception e) when (e is IOException or SocketException or OperationCanceledException)
+        {
+            return (false, e.Message);
+        }
+    }
+
     /// <summary>Points another PC's game at one graphics chip or the other.</summary>
     public async Task<(bool Ok, string Message)> GpuChoiceAsync(
         LanPeer peer, string which, string senderName, CancellationToken ct = default)

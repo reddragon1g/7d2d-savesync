@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xml>
+  <Name value="NoLightShadows" />
+  <DisplayName value="No Light Shadows" />
+  <Version value="1.0.0" />
+  <Description value="Player-placed lights still light the room, but stop casting shadows. The sun and the moon are untouched. For bases with a lot of lights in them, where each light was quietly costing a cubemap of shadow renders every frame." />
+  <Author value="reddragon1g" />
+  <Website value="https://github.com/reddragon1g/7d2d-savesync" />
+  <GameVersion value="3.0" />
+</xml>

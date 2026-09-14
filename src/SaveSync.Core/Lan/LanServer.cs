@@ -139,7 +139,7 @@ public sealed class LanServer : IDisposable
                         or "get-log" or "update-offer" or "update-file"
                         or "inbox-list" or "inbox-keep-both" or "restart" or "rename-save"
                         or "get-machine" or "game-stop" or "game-start" or "spawn-pref-reset"
-                        or "gpu-choice" or "get-game-log" or "gpu-pulse") return;
+                        or "gpu-choice" or "get-game-log" or "gpu-pulse" or "mod-install") return;
                 }
             }
             catch (OperationCanceledException) { }
@@ -181,6 +181,7 @@ public sealed class LanServer : IDisposable
             "gpu-choice" => GpuChoiceOp(request),
             "get-game-log" => GetGameLog(request),
             "gpu-pulse" => GpuPulseOp(request),
+            "mod-install" => await ModInstallAsync(request, stream, ct).ConfigureAwait(false),
             "inbox-list" => InboxList(),
             "inbox-keep-both" => InboxKeepBoth(request),
             "restart" => Restart(request),
@@ -498,6 +499,35 @@ public sealed class LanServer : IDisposable
             LogLabel = "pulse",
             LogText = string.Join(Environment.NewLine, text),
         };
+    }
+
+    /// <summary>
+    /// Accepts one mod from a paired PC and installs it.
+    ///
+    /// Gated on the same permission as a program update, and for the same reason: this is code
+    /// that will be executed, which is a categorically different favour from being handed a save.
+    /// Pairing alone never grants it.
+    ///
+    /// Nothing already installed is replaced unless the sender said to, which is the rule this
+    /// program has followed for saves and settings since the beginning.
+    /// </summary>
+    private async Task<LanResponse> ModInstallAsync(LanRequest request, Stream stream, CancellationToken ct)
+    {
+        if (!_config.AllowRemoteUpdate)
+            return LanResponse.Fail("This PC does not accept program or mod updates over the network.");
+
+        var location = _engineProvider()?.Location;
+        if (location is null) return LanResponse.Fail("This PC has not found the game's folders.");
+
+        var result = await ModDelivery.ReceiveAsync(
+            location, request.SaveLabel ?? "", stream, request.BodyBytes, request.Sha256 ?? "",
+            replaceExisting: request.InstallAsName == "replace", ct).ConfigureAwait(false);
+
+        ActivityLog.Write($"asked by {request.DisplayName} to install a mod: {result.Message}");
+
+        return result.Ok
+            ? new LanResponse { Ok = true, Message = result.Message }
+            : LanResponse.Fail(result.Message);
     }
 
     /// <summary>What this PC is, and how the game is behaving on it right now.</summary>

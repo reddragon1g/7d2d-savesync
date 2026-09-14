@@ -16,6 +16,7 @@ using SaveSync.Core;
 //   probe gpu <integrated|discrete|auto|back> [who] - which chip Windows gives the game
 //   probe gamelog [seconds] [who] [phrase]          - the GAME's own log, or a search through it
 //   probe pulse [seconds] [who]                     - watch the card 5x a second for a rhythm
+//   probe pushmod <modFolder> [who] [replace]       - install one mod on another PC
 //   probe here                                      - the full machine report for THIS PC
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
@@ -59,6 +60,7 @@ try
         case "spawnreset": SpawnReset(int.TryParse(Arg(1), out var zw) ? zw : 8, Arg(2)); break;
         case "gpu": GpuPick(At(1), Arg(2)); break;
         case "pulse": Pulse(int.TryParse(Arg(1), out var ps) ? ps : 20, Arg(2)); break;
+        case "pushmod": PushMod(At(1), Arg(2), Arg(3) == "replace"); break;
         case "gamelog": PeerGameLog(int.TryParse(Arg(1), out var gw) ? gw : 10, Arg(2), Arg(3)); break;
         case "here": Console.WriteLine(MachineReport.Read(GamePaths.Discover()).Describe()); break;
         default:
@@ -500,6 +502,36 @@ void PeerGameLog(int seconds, string? who, string? find)
         var report = client.GetGameLogAsync(peer, "probe", default, find).GetAwaiter().GetResult();
         Console.WriteLine(report is null ? "  no answer." : report.Text);
         Console.WriteLine();
+    }
+}
+
+/// <summary>
+/// Sends one mod folder to another PC and installs it there.
+///
+/// Refuses by default to replace a mod already present - say "replace" to mean it.
+/// </summary>
+void PushMod(string folder, string? who, bool replace)
+{
+    if (!Directory.Exists(folder)) { Console.WriteLine($"no such folder: {folder}"); return; }
+
+    var config = AppConfig.Load();
+    Console.WriteLine($"sending {new DirectoryInfo(folder).Name} from {folder}");
+
+    using var discovery = new SaveSync.Core.Lan.Discovery(config) { PersonName = "probe" };
+    discovery.Start();
+    Thread.Sleep(TimeSpan.FromSeconds(10));
+
+    var peers = discovery.Peers
+        .Where(p => who is null || p.DisplayName.Contains(who, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    if (peers.Count == 0) { Console.WriteLine("no other PC answered."); return; }
+
+    var client = new SaveSync.Core.Lan.LanClient(config);
+    foreach (var peer in peers)
+    {
+        var r = client.PushModAsync(peer, folder, "probe", replace).GetAwaiter().GetResult();
+        Console.WriteLine($"  {peer.DisplayName,-18} {(r.Ok ? "OK" : "refused")} - {r.Message}");
     }
 }
 

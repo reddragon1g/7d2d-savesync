@@ -1,0 +1,64 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A 7 Days to Die mod, which is a plain class library the game loads at startup.
+
+    Deliberately outside the solution: this is built against the GAME's assemblies, which live in
+    a Steam folder that is not the same path on any two machines and are not redistributable, so
+    it cannot take part in a normal restore. Building it needs a game install; building SaveSync
+    does not, and keeping that true matters more than the convenience of one `dotnet build`.
+
+    Pass the install explicitly when it is somewhere unusual:
+      dotnet build mods/NoLightShadows -p:GameDir="D:\SteamLibrary\steamapps\common\7 Days To Die"
+  -->
+  <PropertyGroup>
+    <!-- 2.1, not 2.0: the game's own assemblies target netstandard2.1 and a 2.0 library
+         cannot reference them (CS1705). -->
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>NoLightShadows</AssemblyName>
+    <RootNamespace>NoLightShadows</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+
+    <!-- The game loads this by reflection; nothing here is referenced at compile time elsewhere. -->
+    <EnableDefaultItems>true</EnableDefaultItems>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+
+    <GameDir Condition="'$(GameDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\7 Days To Die</GameDir>
+    <Managed>$(GameDir)\7DaysToDie_Data\Managed</Managed>
+    <Harmony>$(GameDir)\Mods\0_TFP_Harmony</Harmony>
+  </PropertyGroup>
+
+  <!--
+    Private, and never copied to the output. A mod folder containing its own copy of
+    Assembly-CSharp or 0Harmony is a well-known way to break a game install, because the game
+    loads whatever it finds in Mods and would then be running two different versions of itself.
+  -->
+  <ItemGroup>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(Managed)\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(Managed)\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(Managed)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Log.Out lives here, not in Assembly-CSharp, so its line lands in the game's own log
+         alongside everything else rather than in Unity's stack-trace-decorated output. -->
+    <Reference Include="LogLibrary">
+      <HintPath>$(Managed)\LogLibrary.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(Harmony)\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>
