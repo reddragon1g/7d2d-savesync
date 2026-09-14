@@ -1,0 +1,49 @@
+7 DAYS TO DIE - SAVE TRANSFER  (small version, for sending over Discord)
+========================================================================
+
+This is the same program as the one on the USB stick, just packed small enough
+to send. It works exactly the same once it is running.
+
+
+ONE THING TO INSTALL FIRST
+--------------------------
+This small version does not carry Windows' .NET runtime with it - that is the
+only reason it fits. If you do not already have it, the program will open a
+box saying so with a Download button. Or get it yourself here:
+
+    https://dotnet.microsoft.com/download/dotnet/8.0/runtime
+
+Pick:  .NET Desktop Runtime 8  -  Windows  -  x64  -  "Download x64"
+
+It is a normal Microsoft installer, takes about a minute, and you only ever
+do it once on that PC. Most PCs that run other apps already have it.
+
+(If you would rather not install anything at all, ask for the big version -
+ it is one 66 MB file that needs nothing, but it is too big for Discord.)
+
+
+THEN
+----
+1. Unzip this somewhere you will find again - the Desktop is fine.
+2. Run SaveSync.exe.
+3. Windows may say "Windows protected your PC" because the program is not
+   signed. Click "More info", then "Run anyway". Only happens once.
+4. It asks who you are the first time. Pick your name, or add it.
+5. After that there are only ever two buttons, and the ORANGE one is the one
+   you want.
+
+Full instructions: open quick-start.html in this folder.
+
+
+THE SHORT VERSION
+-----------------
+  Send my saves ................ your game goes to the other PC
+  Bring the newer saves here .... the other PC's game comes to this one
+
+Close 7 Days to Die before copying. It will refuse otherwise, on purpose -
+copying a save while the game has it open makes a broken world.
+
+Nothing is ever deleted. Anything replaced is kept as a backup you can put
+back from the "Backups" button.
+
+Your mods travel with the save. A mod you already have is never written over.

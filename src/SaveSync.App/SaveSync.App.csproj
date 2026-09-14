@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <CodePage>65001</CodePage>
+
+    <AssemblyName>SaveSync</AssemblyName>
+    <RootNamespace>SaveSync.App</RootNamespace>
+    <Product>7 Days to Die Save Transfer</Product>
+    <AssemblyTitle>7 Days to Die Save Transfer</AssemblyTitle>
+    <Version>1.0.0</Version>
+
+    <!-- Mixed DPI is the norm here: a high-DPI laptop paired with a 1080p desktop. -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <!-- One EXE the user can double-click. No runtime to install on someone else's PC, which is
+       the whole point when this is deployed to two machines you do not control. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SaveSync.Core\SaveSync.Core.csproj" />
+  </ItemGroup>
+
+</Project>

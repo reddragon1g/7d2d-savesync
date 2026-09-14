@@ -1,0 +1,17 @@
+# Build output. The published EXE is attached to a Release instead of committed -
+# it is 66 MB, and GitHub warns above 50 MB for files inside a repository.
+bin/
+obj/
+dist/
+share/*.zip
+
+# Per-machine settings. A config.json that travelled here would carry one PC's
+# save-folder override, and its machine identity, to everybody who cloned this.
+config.json
+profiles.json
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo

@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>7 Days to Die - Save Transfer - Quick Start</title>
+<style>
+  :root {
+    --bg: #14120f;
+    --surface: #1e1b16;
+    --raised: #262219;
+    --border: #3a342a;
+    --text: #ede6d8;
+    --muted: #9b9285;
+    --faint: #776e63;
+    --accent: #c2571e;
+    --warn: #d8a22b;
+    --good: #8ab04a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 20px 64px;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+
+  header { border-bottom: 3px solid var(--accent); padding-bottom: 18px; margin-bottom: 32px; }
+  h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
+  .kicker { color: var(--accent); font-weight: 700; letter-spacing: 0.12em; font-size: 13px; margin-bottom: 6px; }
+  .lede { color: var(--muted); margin: 10px 0 0; }
+
+  h2 { font-size: 20px; margin: 36px 0 12px; }
+
+  ol.steps { list-style: none; counter-reset: s; padding: 0; margin: 0; }
+  ol.steps > li {
+    counter-increment: s;
+    position: relative;
+    padding: 16px 18px 16px 62px;
+    margin-bottom: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  ol.steps > li::before {
+    content: counter(s);
+    position: absolute; left: 18px; top: 15px;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--accent); color: #fff;
+    font-weight: 700; font-size: 15px;
+    display: grid; place-items: center;
+  }
+  ol.steps b { color: var(--text); }
+
+  .btn {
+    display: inline-block;
+    background: var(--accent); color: #fff;
+    padding: 3px 12px; border-radius: 5px;
+    font-weight: 700; font-size: 14px;
+    white-space: nowrap;
+  }
+  .btn.grey { background: var(--raised); color: var(--muted); border: 1px solid var(--border); }
+
+  .note {
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
+    background: var(--surface);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 16px 0;
+  }
+  .note.warn { border-left-color: var(--warn); }
+  .note.good { border-left-color: var(--good); }
+  .note h3 { margin: 0 0 6px; font-size: 15px; }
+  .note.warn h3 { color: var(--warn); }
+  .note.good h3 { color: var(--good); }
+  .note p { margin: 0; color: var(--muted); }
+
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--faint); font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; }
+  td:first-child { color: var(--text); font-weight: 600; width: 42%; }
+  td:last-child { color: var(--muted); }
+
+  footer { margin-top: 44px; padding-top: 18px; border-top: 1px solid var(--border); color: var(--faint); font-size: 14px; }
+
+  @media print {
+    body { background: #fff; color: #000; padding: 0; }
+    .note, ol.steps > li { background: #fff; border-color: #bbb; }
+    td:last-child, .note p, .lede { color: #333; }
+    .btn { background: #ddd; color: #000; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="kicker">7 DAYS TO DIE</div>
+    <h1>Moving your save between the two PCs</h1>
+    <p class="lede">Two buttons, and the orange one is always the one you want. It works over your
+       home network, or on a USB stick when you are away from it.</p>
+  </header>
+
+  <h2>Set it up once on each PC</h2>
+  <p class="lede" style="margin-bottom:14px">Two buttons appear near the top of the window the
+     first time. Both are worth doing, and neither is asked again.</p>
+  <ol class="steps">
+    <li><b>Allow over the network.</b> Lets the two PCs send saves straight to each other, with no
+        stick involved. Windows asks for permission once - click Yes - and never asks again.</li>
+    <li><b>Install on this PC.</b> Puts the program on that PC so it starts with Windows and sits
+        quietly next to the clock. This is what lets a PC notice by itself that the other one has
+        come home with a newer save.</li>
+  </ol>
+
+  <div class="note good">
+    <h3>After that it mostly looks after itself</h3>
+    <p>Play on the laptop anywhere, even with no internet. Come home, and the two PCs see each
+       other. A message appears near the clock saying the laptop has a newer save. Open it, press
+       the orange button, play.</p>
+  </div>
+
+  <h2>The two buttons</h2>
+  <ol class="steps">
+    <li><b>Close 7 Days to Die.</b> It refuses to copy while the game is open, because copying a
+        save mid-write makes a broken world.</li>
+    <li>Press <span class="btn">Send my saves</span> on the PC you just played on.</li>
+    <li>Press <span class="btn">Bring the newer saves here</span> on the PC you want to play on.</li>
+  </ol>
+
+  <div class="note good">
+    <h3>The orange button is always the right one</h3>
+    <p>The program checks both sides and lights up the one you need. The other stays greyed out and
+       says why, so there is nothing to work out.</p>
+  </div>
+
+  <h2>Your mods come with it</h2>
+  <p class="lede" style="margin-bottom:14px">A save made with mods needs those same mods on the
+     other PC, or the world will not load properly. You do not have to do anything - the mods ride
+     along with the save.</p>
+  <table>
+    <tr><th>On the other PC</th><th>What happens</th></tr>
+    <tr>
+      <td>It does not have the mod</td>
+      <td>The mod is copied across and installed, with its settings.</td>
+    </tr>
+    <tr>
+      <td>It has the same mod already</td>
+      <td>Nothing is touched.</td>
+    </tr>
+    <tr>
+      <td>It has the mod, but a different version or different settings</td>
+      <td><b>Yours is kept.</b> The incoming one is not installed over the top of it.</td>
+    </tr>
+    <tr>
+      <td>It has mods the other PC does not</td>
+      <td>They are left exactly where they are. Nothing is removed.</td>
+    </tr>
+  </table>
+
+  <div class="note good">
+    <h3>Your mod settings are never written over</h3>
+    <p>Most mods keep their settings inside their own folder, and the other PC cannot know how you
+       have set yours up. So a mod that is already installed here is never replaced - even if the
+       other PC has a newer one. If a mod cannot be copied for any reason, the save still goes
+       across and the program says which mod it skipped.</p>
+  </div>
+
+  <div class="note">
+    <h3>It finds mods even if they were unzipped wrong</h3>
+    <p>A mod downloaded as a zip often ends up one folder too deep, which is the usual reason a mod
+       "does not work". The program looks inside those extra folders, finds the real mod, and puts
+       it in the right place on the other PC.</p>
+  </div>
+
+  <h2>Travelling, or the PCs are not on the same network</h2>
+  <p class="lede" style="margin-bottom:14px">Use the USB stick exactly as before - run the program
+     from the stick, press the orange button, carry it across, press the orange button there. Both
+     ways work at any time, and you never have to say which one you are using.</p>
+
+  <h2>What if it says something else?</h2>
+  <table>
+    <tr><th>It says</th><th>What to do</th></tr>
+    <tr>
+      <td>Everything matches</td>
+      <td>Nothing to do. Both sides already hold the same save.</td>
+    </tr>
+    <tr>
+      <td>Close the game first</td>
+      <td>7 Days to Die is still running. Close it, then press Refresh.</td>
+    </tr>
+    <tr>
+      <td>No USB stick found</td>
+      <td>Plug the stick in and wait a couple of seconds, or use the network instead.</td>
+    </tr>
+    <tr>
+      <td>Other PC: not switched on right now</td>
+      <td>The other PC is off, asleep, or the program is not running on it. Use the stick, or start it over there.</td>
+    </tr>
+    <tr>
+      <td>Cannot find your saves</td>
+      <td>The game has probably never been run on that PC. Run it once, quit, and try again.</td>
+    </tr>
+    <tr>
+      <td>One save needs you to choose</td>
+      <td>Both PCs were played since they last matched. See below.</td>
+    </tr>
+  </table>
+
+  <div class="note warn">
+    <h3>"These are two different saves"</h3>
+    <p>Sometimes two PCs have a save with the same name that is not the same game at all -
+       somebody else started their own. The program spots that and <b>will not do it on its own</b>.
+       It tells you in plain words, names both saves side by side, and waits. If you decide to go
+       ahead anyway, the save that was there is kept <b>permanently</b> as a backup you can put
+       straight back.</p>
+  </div>
+
+  <div class="note">
+    <h3>It always tells you what it is touching</h3>
+    <p>Every message names the save and the world - moving, backing up, restoring or replacing -
+       so you can check it is the right one before anything happens.</p>
+  </div>
+
+  <div class="note warn">
+    <h3>"Both PCs were played"</h3>
+    <p>This happens when someone played on each PC without moving the stick in between. The two
+       worlds cannot be merged - nobody's tool can do that - so you pick which one to keep.
+       <b>The one you do not pick is not deleted.</b> It goes into Backups and you can put it back
+       at any time.</p>
+  </div>
+
+  <div class="note">
+    <h3>Nothing is ever deleted</h3>
+    <p>Every time a save gets replaced, the old one is kept - <b>every one of them, for good</b>.
+       A backup only ever disappears because you deleted it yourself. Click <b>Backups</b> at the
+       bottom of the window to see them and put any of them back. If a transfer is interrupted -
+       the power goes, the stick is pulled out - the save is put back the way it was next time you
+       open the program.</p>
+  </div>
+
+  <div class="note good">
+    <h3>Make a backup any time you like</h3>
+    <p>Open <b>Backups</b> and press <span class="btn">Back this save up now</span>. It copies the
+       save exactly as it is this second, before you try anything you are unsure about. Backups made
+       this way are kept permanently.</p>
+  </div>
+
+  <div class="note">
+    <h3>Every backup explains itself</h3>
+    <p>Inside each backup folder there is a file called
+       <b>READ ME - how to put this back.txt</b>. It says which save it is, when it was taken, why
+       it was kept, and how to put it back by hand - with plain folder copying, no program needed.
+       So a backup still makes sense in a year, on a PC that has never heard of this tool.</p>
+  </div>
+
+  <div class="note">
+    <h3>Both people's characters travel together</h3>
+    <p>A world holds a separate character for each person who has played in it, and the whole world
+       moves as one piece. You do not need to do anything special for the second person.</p>
+  </div>
+
+  <h2>Where can you keep the program?</h2>
+  <p class="lede" style="margin-bottom:14px">Anywhere. It is a single file that needs nothing
+     installed - run it from the USB stick, the Desktop, your Downloads folder, or a shared drive.
+     If the place you run it from is read-only, it still works; it just keeps its settings on that
+     PC instead of next to itself.</p>
+
+  <footer>
+    If something looks wrong, open a Command Prompt on that PC and run
+    <b>SaveSync.exe --diagnose</b>. It writes a short report to your Temp folder that says exactly
+    what it found and where.
+  </footer>
+
+</div>
+</body>
+</html>

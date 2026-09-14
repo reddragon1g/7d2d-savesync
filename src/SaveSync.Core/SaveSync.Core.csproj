@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <CodePage>65001</CodePage>
+    <AssemblyName>SaveSync.Core</AssemblyName>
+    <RootNamespace>SaveSync.Core</RootNamespace>
+
+    <!-- Symbols go inside the DLL, which is then bundled into the single EXE. Without this the
+         library drops a loose .pdb next to the program, and the stick is meant to hold three
+         files that a non-technical person can recognise. -->
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+</Project>

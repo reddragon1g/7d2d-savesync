@@ -1,0 +1,115 @@
+7 DAYS TO DIE - SAVE TRANSFER
+=============================
+
+Keep this whole folder on the USB stick. Run SaveSync.exe from the stick.
+
+The first time it opens it asks who you are. Pick your name, or add it.
+After that there are only ever two buttons. The ORANGE one is the one you want.
+
+
+THE TWO BUTTONS
+---------------
+  Send my saves ................ your game goes to the other PC (or the stick)
+  Bring the newer saves here .... the other PC's game comes to this one
+
+The program checks both sides first and lights up whichever you need.
+The other button stays greyed out and tells you why.
+
+It always names the save and the world it is about to move, back up or replace,
+so you can see what it is doing before you press anything.
+
+
+SET IT UP ONCE ON EACH PC (worth doing)
+---------------------------------------
+When you open it there are two buttons near the top:
+
+  "Allow over the network"
+      Lets the two PCs send saves to each other directly, no stick needed.
+      Windows asks for permission ONCE. Click Yes. It never asks again.
+
+  "Install on this PC"
+      Puts the program on that PC so it starts with Windows and sits quietly
+      next to the clock. This is what lets a PC notice on its own that the
+      other one came home with a newer save.
+
+Do both on both PCs and you can mostly forget the stick exists.
+
+
+WHAT NORMALLY HAPPENS AFTER THAT
+--------------------------------
+  1. Play on the laptop, anywhere, even with no internet.
+  2. Come home. The PCs see each other.
+  3. A message pops up near the clock: the laptop has a newer save.
+  4. Open it, press the orange button, play.
+
+
+RUN IT FROM WHEREVER YOU LIKE
+-----------------------------
+The stick, the Desktop, your Downloads folder, anywhere. It is one file and it
+needs nothing installed. If the place you run it from is read-only it still
+works - it just keeps its settings on the PC instead.
+
+
+IT WILL NOT QUIETLY REPLACE SOMEONE ELSE'S GAME
+-----------------------------------------------
+If the other PC has a save with the same name that is actually a DIFFERENT game
+- somebody else's - it says so in plain words and stops. It will never do that
+one on its own. If you do choose to go ahead, their save is kept permanently as
+a backup you can put straight back.
+
+
+CLOSE THE GAME FIRST
+--------------------
+It will refuse to copy while 7 Days to Die is open, because copying a save
+mid-write makes a broken world. Close the game, then press Refresh.
+
+
+YOUR MODS GO TOO
+----------------
+You do not have to do anything. When a save is copied over, any mods it needs
+go with it, settings and all.
+
+  - A mod the other PC does not have gets installed there.
+  - A mod it already has is LEFT ALONE. Yours is never written over, even if
+    the other PC has a newer one, because your settings live in that folder.
+  - Mods only one PC has are never removed from either.
+
+It also finds mods that were unzipped wrong (one folder too deep) and puts
+them in properly on the other side.
+
+
+NOTHING IS EVER DELETED
+-----------------------
+Any save that gets replaced is kept - all of them, for good. A backup only
+goes away if you delete it yourself. Click "Backups" at the bottom of the
+window to see them and put any of them back.
+
+Want one right now, before you try something? Open "Backups" and press
+"Back this save up now".
+
+Every backup has a file inside it called
+"READ ME - how to put this back.txt" which says what it is and how to put it
+back by hand, so it still makes sense even without this program.
+
+If it says "needs you to choose", both sides were played since they last
+matched. Pick one - the other is kept as a backup, not thrown away.
+
+
+TRAVELLING, OR THE PCs ARE NOT ON THE SAME NETWORK
+--------------------------------------------------
+Use the stick exactly as before. Press the orange button on one PC, carry the
+stick over, press the orange button on the other. Both ways work, any time.
+
+
+THE FIRST TIME ON EACH PC
+-------------------------
+Windows may say "Windows protected your PC" because this program is not
+signed. Click "More info", then "Run anyway". Only happens once per PC.
+
+
+IF SOMETHING LOOKS WRONG
+------------------------
+Open a Command Prompt and run:  SaveSync.exe --diagnose
+It writes a short report saying exactly what it found and where.
+
+Fuller instructions: open quick-start.html
