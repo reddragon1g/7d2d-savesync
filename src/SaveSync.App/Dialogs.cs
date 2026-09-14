@@ -25,6 +25,12 @@ public static class Dialogs
     /// Returns true only on an explicit yes. The cancel side is always the default, so a stray
     /// Enter or Escape never commits anything.
     /// </summary>
+    /// <summary>
+    /// How long a destructive button stays unclickable. Long enough to break a double-click and
+    /// to make somebody look at the words; short enough that nobody notices it when they meant it.
+    /// </summary>
+    public static readonly TimeSpan ArmDelay = TimeSpan.FromSeconds(2);
+
     public static bool Confirm(
         IWin32Window? owner, string title, string message,
         string yesText, string noText = "Cancel", bool dangerous = false)
@@ -80,7 +86,10 @@ public static class Dialogs
         bool result = false;
 
         var primary = new FlatButton(primaryText, primary: true) { Width = 0, Height = 40 };
-        primary.Width = Math.Max(120, TextRenderer.MeasureText(primaryText, Theme.ButtonFont).Width + 44);
+
+        // Sized for the countdown text as well, so the button does not resize as it arms.
+        primary.Width = Math.Max(120,
+            TextRenderer.MeasureText(primaryText + "  (0)", Theme.ButtonFont).Width + 44);
         primary.SetBounds(width - padX - primary.Width, y, primary.Width, 40);
         primary.Click += (_, _) => { result = true; form.DialogResult = DialogResult.OK; form.Close(); };
         form.Controls.Add(primary);
@@ -102,6 +111,35 @@ public static class Dialogs
         {
             form.AcceptButton = primary;
             form.CancelButton = primary;
+        }
+
+        // The destructive button cannot be pressed for a moment after the dialog appears.
+        //
+        // Everything else here already stops a keyboard reflex - Escape cancels, Enter does
+        // nothing, and the cancel button is the one holding focus. The gap this closes is the
+        // mouse: somebody clicking quickly through a screen can land a second click on a button
+        // that only just appeared underneath the pointer, and on this dialog that click replaces
+        // a world. A button that is not there to be clicked yet cannot be clicked by accident.
+        if (dangerous)
+        {
+            primary.Enabled = false;
+            var armsAt = DateTime.UtcNow + ArmDelay;
+
+            var arming = new System.Windows.Forms.Timer { Interval = 100 };
+            arming.Tick += (_, _) =>
+            {
+                var left = armsAt - DateTime.UtcNow;
+                if (left <= TimeSpan.Zero)
+                {
+                    primary.Text = primaryText;
+                    primary.Enabled = true;
+                    arming.Stop();
+                    return;
+                }
+                primary.Text = $"{primaryText}  ({Math.Ceiling(left.TotalSeconds):0})";
+            };
+            arming.Start();
+            form.FormClosed += (_, _) => { arming.Stop(); arming.Dispose(); };
         }
 
         form.ClientSize = new Size(width, y + 40 + 22);

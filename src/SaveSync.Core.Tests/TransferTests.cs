@@ -748,4 +748,145 @@ public class TransferTests : IDisposable
         Assert.False(Directory.Exists(Path.Combine(
             Path.GetDirectoryName(plan.TargetFolder)!, suggested)));
     }
+
+    // ------------------------------------------------- a save copied by hand, missing its players
+
+    [Fact]
+    public void A_save_whose_player_folder_was_missed_is_called_out_on_the_way_in()
+    {
+        // What actually happened before this tool existed: the save folder was dragged across and
+        // Player was missed. The world arrives, every character does not, and the game silently
+        // starts everyone again from nothing. Nothing about it looks wrong until you load it.
+        _desktop.MakeSave(saveName: "Shared World");
+        var pkg = _desktop.NewEngine().Export(_desktop.Slot(saveName: "Shared World"), _stick).PackageDir;
+
+        _laptop.MakeSave(saveName: "Shared World", seed: 5);
+        var handCopied = _laptop.Slot(saveName: "Shared World").Folder;
+        PathUtil.DeleteTree(Path.Combine(handCopied, "Player"));
+        File.Delete(Path.Combine(handCopied, Passport.FileName));
+
+        var plan = _laptop.NewEngine().Inspect(pkg);
+
+        Assert.Equal(Relation.Unregistered, plan.Relation);
+        Assert.False(plan.IsOneClickSafe);
+        Assert.Contains(plan.Findings, f => f.Message.Contains("no character data at all"));
+    }
+
+    [Fact]
+    public void A_save_missing_its_players_is_not_sent_on_silently()
+    {
+        // Sending it spreads the damage to the other PC, and it is the one fault that looks
+        // completely fine right up until somebody loads the game.
+        _desktop.MakeSave(saveName: "Broken");
+        PathUtil.DeleteTree(Path.Combine(_desktop.Slot(saveName: "Broken").Folder, "Player"));
+
+        var result = _desktop.NewEngine().Export(_desktop.Slot(saveName: "Broken"), _stick);
+
+        Assert.Contains(result.Findings, f => f.Message.Contains("no character data"));
+    }
+
+    [Fact]
+    public void A_complete_save_says_nothing_about_missing_players()
+    {
+        _desktop.MakeSave(saveName: "Whole");
+        var result = _desktop.NewEngine().Export(_desktop.Slot(saveName: "Whole"), _stick);
+
+        Assert.DoesNotContain(result.Findings, f => f.Message.Contains("character data"));
+
+        var ev = SaveEvidence.Read(_desktop.Slot(saveName: "Whole").Folder);
+        Assert.False(ev.MissingCharacterData);
+        Assert.False(ev.PartialCharacterData);
+        Assert.Equal(2, ev.CharacterFiles);
+    }
+
+    [Fact]
+    public void Losing_one_character_of_several_is_noticed_too()
+    {
+        _desktop.MakeSave(saveName: "HalfThere");
+        var dir = Path.Combine(_desktop.Slot(saveName: "HalfThere").Folder, "Player");
+        File.Delete(Directory.GetFiles(dir, "*.ttp")[0]);
+
+        var ev = SaveEvidence.Read(_desktop.Slot(saveName: "HalfThere").Folder);
+
+        Assert.False(ev.MissingCharacterData);
+        Assert.True(ev.PartialCharacterData);
+    }
+
+    [Fact]
+    public void A_hand_copied_save_is_not_mistaken_for_a_different_game()
+    {
+        // The missing Player folder must not be read as evidence of divergence. It is the same
+        // world - it is just incomplete - and calling it a different game would push somebody
+        // towards keeping the broken copy.
+        _desktop.MakeSave(saveName: "Shared World");
+        var pkg = _desktop.NewEngine().Export(_desktop.Slot(saveName: "Shared World"), _stick).PackageDir;
+
+        _laptop.MakeSave(saveName: "Shared World", seed: 5);
+        var handCopied = _laptop.Slot(saveName: "Shared World").Folder;
+        PathUtil.DeleteTree(Path.Combine(handCopied, "Player"));
+        File.Delete(Path.Combine(handCopied, Passport.FileName));
+
+        var plan = _laptop.NewEngine().Inspect(pkg);
+
+        Assert.NotNull(plan.Kinship);
+        Assert.False(plan.Kinship!.ProvenDifferent);
+    }
+
+    // ---------------------------------------------------------------- nothing destroyed by accident
+
+    [Fact]
+    public void No_path_through_the_engine_can_replace_a_save_without_an_explicit_decision()
+    {
+        // The button-mashing question, answered where it actually matters. Whatever the UI does,
+        // the engine itself refuses: Apply is only legal when there was never a choice to make.
+        _desktop.MakeSave(saveName: "Theirs");
+        var pkg = _desktop.NewEngine().Export(_desktop.Slot(saveName: "Theirs"), _stick).PackageDir;
+
+        _laptop.MakeSave(saveName: "Theirs", seed: 5);      // unrelated save, same name
+        var mine = Manifest.Build(_laptop.Slot(saveName: "Theirs").Folder);
+
+        var engine = _laptop.NewEngine();
+        var plan = engine.Inspect(pkg);
+
+        Assert.True(plan.NeedsHumanChoice);
+        Assert.False(plan.IsOneClickSafe);
+        Assert.Throws<InvalidOperationException>(() => engine.Import(plan, ImportChoice.Apply));
+
+        // Untouched, byte for byte.
+        Assert.Empty(mine.Verify(_laptop.Slot(saveName: "Theirs").Folder));
+    }
+
+    [Fact]
+    public void Two_default_named_saves_in_the_same_stock_world_are_told_apart()
+    {
+        // The exact trap: the game names everyone's first world the same, so two unrelated saves
+        // collide by default and nothing about the names hints that they are different.
+        _desktop.MakeSave(saveName: "My Game", seed: 1, gameTimeTicks: 24000L * 60);
+        _laptop.MakeSave(saveName: "My Game", seed: 99, gameTimeTicks: 24000L * 9);
+
+        // Give the laptop's world some ground the other has never had - divergence that cannot be
+        // explained away by one simply being older.
+        TestEnv.WriteBytes(Path.Combine(_laptop.Slot(saveName: "My Game").Folder, "Region", "r.99.99.7rg"),
+            new Random(4), 2048);
+
+        var pkg = _desktop.NewEngine().Export(_desktop.Slot(saveName: "My Game"), _stick).PackageDir;
+        var plan = _laptop.NewEngine().Inspect(pkg);
+
+        Assert.NotNull(plan.Kinship);
+        Assert.True(plan.Kinship!.ProvenDifferent);
+        Assert.False(plan.IsOneClickSafe);
+    }
+
+    [Fact]
+    public void A_save_in_a_different_world_is_never_confused_with_a_local_one()
+    {
+        _desktop.MakeSave(world: "Navezgane", saveName: "My Game", worldFingerprint: 111111);
+        _laptop.MakeSave(world: "Navezgane", saveName: "My Game", seed: 9, worldFingerprint: 222222);
+
+        var pkg = _desktop.NewEngine().Export(_desktop.Slot(saveName: "My Game"), _stick).PackageDir;
+        var plan = _laptop.NewEngine().Inspect(pkg);
+
+        Assert.True(plan.Kinship!.ProvenDifferent);
+        Assert.Contains(plan.Kinship.Reasons, r => r.Contains("not even the same world"));
+    }
 }

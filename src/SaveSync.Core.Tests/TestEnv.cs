@@ -48,7 +48,19 @@ public sealed class TestEnv : IDisposable
     public TransferEngine NewEngine() => new(Config, Location);
 
     /// <summary>Creates a save that looks like the real thing. Contents are deterministic from the seed.</summary>
-    public string MakeSave(string world = "Navezgane", string saveName = "My Game", int seed = 1, int regionFiles = 3)
+    /// <summary>Navezgane's value on a real machine, so tests and reality agree on what a world is.</summary>
+    public const uint DefaultWorldFingerprint = 2348195674;
+
+    /// <summary>The two players every synthetic save has, exactly as the game records them.</summary>
+    public static readonly string[] PlayerIds =
+    {
+        "aaaaaaaa111122223333444455556666",
+        "bbbbbbbb777788889999aaaabbbbcccc",
+    };
+
+    public string MakeSave(
+        string world = "Navezgane", string saveName = "My Game", int seed = 1, int regionFiles = 3,
+        uint? worldFingerprint = null, long? gameTimeTicks = null)
     {
         var dir = Path.Combine(Location.SavesDir, world, saveName);
         Directory.CreateDirectory(dir);
@@ -59,10 +71,16 @@ public sealed class TestEnv : IDisposable
 
         var rnd = new Random(seed);
 
-        WriteBytes(Path.Combine(dir, "main.ttw"), rnd, 4096);
+        // A real ttw header, not random bytes. The tool reads the game version, the world and the
+        // clock straight out of this, so a fake one silently turns every test of that logic into a
+        // test of the "could not read it" branch.
+        WriteWorldFile(Path.Combine(dir, "main.ttw"), worldFingerprint ?? DefaultWorldFingerprint,
+            gameTimeTicks ?? 24000L * 9, rnd);
         WriteBytes(Path.Combine(dir, "main.ttw.bak"), rnd, 4096);
         WriteBytes(Path.Combine(dir, "decoration.7dt"), rnd, 2048);
-        WriteText(Path.Combine(dir, "players.xml"), $"<players seed=\"{seed}\" />");
+        // The real shape, listing the same two players whose .ttp files are written below - a
+        // save that lists nobody cannot exercise anything that compares players.
+        WritePlayersXml(Path.Combine(dir, "players.xml"), PlayerIds);
 
         foreach (var name in new[] { "power", "vehicles", "turrets", "drones", "blockLimits" })
         {
@@ -74,7 +92,7 @@ public sealed class TestEnv : IDisposable
             WriteBytes(Path.Combine(dir, "Region", $"r.{i}.0.7rg"), rnd, 8192);
 
         // Two players in one world, exactly as the real game stores them.
-        foreach (var eos in new[] { "EOS_aaaaaaaa111122223333444455556666", "EOS_bbbbbbbb777788889999aaaabbbbcccc" })
+        foreach (var eos in PlayerIds.Select(id => "EOS_" + id))
         {
             WriteBytes(Path.Combine(dir, "Player", eos + ".ttp"), rnd, 1024);
             WriteBytes(Path.Combine(dir, "Player", eos + ".ttp.bak"), rnd, 1024);
@@ -163,6 +181,51 @@ public sealed class TestEnv : IDisposable
         var slot = Slot(world, saveName);
         if (slot.Passport is null) SaveDiscovery.Adopt(slot, Location);
         return slot;
+    }
+
+    /// <summary>
+    /// Writes a main.ttw the tool can actually read: the magic, the format number, a length-
+    /// prefixed game version, then the value that identifies the world and the game clock at the
+    /// offsets the real file puts them.
+    /// </summary>
+    public static void WriteWorldFile(string path, uint worldFingerprint, long ticks, Random rnd)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+
+        using var ms = new MemoryStream();
+        using var w = new BinaryWriter(ms);
+
+        w.Write(new[] { (byte)'t', (byte)'t', (byte)'w', (byte)0 });
+        w.Write(SaveEvidence.KnownFormat);
+
+        var version = "V 3.2.0 (b10)";
+        w.Write((byte)version.Length);
+        w.Write(System.Text.Encoding.ASCII.GetBytes(version));
+
+        // Filler up to the two fields that matter, then the fields themselves.
+        for (int i = 0; i < 13; i++) w.Write(i);
+        w.Write(worldFingerprint);
+        w.Write((uint)ticks);
+
+        var tail = new byte[4096];
+        rnd.NextBytes(tail);
+        w.Write(tail);
+
+        File.WriteAllBytes(path, ms.ToArray());
+    }
+
+    public static void WritePlayersXml(string path, IEnumerable<string> playerIds)
+    {
+        var rows = string.Join(Environment.NewLine, playerIds.Select((id, i) =>
+            $"  <player platform=\"EOS\" userid=\"{id}\" nativeplatform=\"Steam\" "
+            + $"nativeuserid=\"7656119900244017{i}\" playername=\"Tester{i}\" playgroup=\"Standalone\" "
+            + $"lastlogin=\"2026-09-13 21:29:2{i}\" position=\"114{i},80,87{i}\" />"));
+
+        WriteText(path,
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" + Environment.NewLine
+            + "<persistentplayerdata version=\"1\">" + Environment.NewLine
+            + rows + Environment.NewLine
+            + "</persistentplayerdata>" + Environment.NewLine);
     }
 
     public static void WriteBytes(string path, Random rnd, int length)

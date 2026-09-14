@@ -69,6 +69,14 @@ public sealed class ImportDialog : Form
         bool safe = Lineage.IsSafeToApply(plan.Relation) && !plan.HasBlockers && !_mustChoose;
         y = AddBanner(y, LevelFor(plan), HeadlineFor(plan), Lineage.Explain(plan.Relation),
             safe ? Theme.Good : null, safe ? Theme.GoodSoft : null);
+
+        if (plan.Kinship?.ProvenDifferent == true)
+        {
+            y = AddBanner(y, Severity.Warning, "These are two different games",
+                plan.Kinship.Headline + " "
+                + string.Join(" ", plan.Kinship.Reasons)
+                + " Keeping both is almost certainly what you want.");
+        }
         y = AddComparison(y);
 
         if (plan.Local is not null
@@ -129,6 +137,13 @@ public sealed class ImportDialog : Form
             }
 
             y += 4;
+
+            // When the two are provably different games, the answer is almost always "keep both",
+            // so that is the one already chosen. Nothing destructive is ever pre-selected: somebody
+            // clicking straight through without reading must land on the outcome that loses
+            // nothing, not on the one that replaces a world.
+            if (_keepBoth is not null && plan.Kinship?.ProvenDifferent == true)
+                _keepBoth.Checked = true;
 
             _takeIncoming.Chosen += (_, _) => { _keepLocal.Checked = false; if (_keepBoth is not null) _keepBoth.Checked = false; UpdateGo(); };
             _keepLocal.Chosen += (_, _) => { _takeIncoming.Checked = false; if (_keepBoth is not null) _keepBoth.Checked = false; UpdateGo(); };

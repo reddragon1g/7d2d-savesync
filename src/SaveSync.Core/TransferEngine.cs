@@ -300,6 +300,12 @@ public sealed class TransferEngine
         if (blockers.Count > 0) throw new TransferBlockedException(blockers);
 
         var gameVersion = SaveDiscovery.ReadGameVersionHint(Location);
+
+        // Checked before packaging, not after: sending a save whose characters are missing spreads
+        // the damage to the other PC, and it is the one fault that looks completely fine until
+        // somebody loads the game and finds themselves back at level one.
+        var outgoing = SaveEvidence.Read(slot.Folder);
+
         var manifest = Manifest.Build(slot.Folder, progress, ct);
         var passport = CommitLocalVersion(slot, manifest, gameVersion, progress);
 
@@ -342,6 +348,21 @@ public sealed class TransferEngine
             Bytes = manifest.TotalBytes,
             Files = manifest.Count,
         };
+
+        if (outgoing.MissingCharacterData)
+        {
+            result.Findings.Add(new Finding(Severity.Warning,
+                $"This save has no character data - {outgoing.PlayerIds.Count} player(s) are listed "
+                + "but none of their files are on this PC. It has been copied as it is, but anyone "
+                + "loading it will start again from nothing. This usually means the save was "
+                + "copied by hand at some point and the Player folder was missed."));
+        }
+        else if (outgoing.PartialCharacterData)
+        {
+            result.Findings.Add(new Finding(Severity.Warning,
+                $"This save is missing some character data - {outgoing.PlayerIds.Count} player(s) are "
+                + $"listed but only {outgoing.CharacterFiles} of their files are here."));
+        }
 
         bool includesWorld = false;
         if (slot.NeedsGeneratedWorld)
@@ -480,11 +501,30 @@ public sealed class TransferEngine
         // think about.
         if (plan.NeedsHumanChoice && local is not null)
         {
-            var verdict = SaveKinship.Compare(
-                SaveEvidence.Read(local.Folder),
-                SaveEvidence.Read(PackageLayout.Payload(packageDir)));
+            var here = SaveEvidence.Read(local.Folder);
+            var arriving = SaveEvidence.Read(PackageLayout.Payload(packageDir));
+            var verdict = SaveKinship.Compare(here, arriving);
 
             plan.Kinship = verdict;
+
+            // The commonest reason somebody is doing this at all: they already tried copying the
+            // folder by hand, missed Player, and the characters vanished. Saying so turns a
+            // baffling choice into an obvious one.
+            if (here.MissingCharacterData)
+            {
+                plan.Findings.Add(new Finding(Severity.Warning,
+                    $"The save already on this PC has no character data at all - {here.PlayerIds.Count} "
+                    + "player(s) are listed but none of their files are here. That is what a save "
+                    + "copied by hand looks like when the Player folder was missed, and it is why "
+                    + "everyone starts again from nothing when it loads. The incoming copy does "
+                    + $"have them ({arriving.CharacterFiles} character file(s))."));
+            }
+            else if (here.PartialCharacterData)
+            {
+                plan.Findings.Add(new Finding(Severity.Warning,
+                    $"The save already on this PC is missing some character data - {here.PlayerIds.Count} "
+                    + $"player(s) are listed but only {here.CharacterFiles} of their files are here."));
+            }
 
             plan.Findings.Add(new Finding(
                 verdict.ProvenDifferent ? Severity.Warning : Severity.Info,

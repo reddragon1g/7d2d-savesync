@@ -33,6 +33,22 @@ public sealed class SaveEvidence
     /// <summary>Which chunks exist. Land is explored, never un-explored.</summary>
     public HashSet<string> Regions { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>How many character files are actually on disk, whatever players.xml claims.</summary>
+    public int CharacterFiles { get; init; }
+
+    /// <summary>
+    /// A save that lists players but holds none of their character files.
+    ///
+    /// This is what a hand-copied save looks like when somebody dragged the folder across and
+    /// missed Player - the world arrives, everyone's inventory, skills and position do not, and
+    /// the game quietly starts them again from nothing. It is the single most common way of
+    /// losing a character to a manual copy, and it is invisible until you load the game.
+    /// </summary>
+    public bool MissingCharacterData => PlayerIds.Count > 0 && CharacterFiles == 0;
+
+    /// <summary>Some characters are there and some are not.</summary>
+    public bool PartialCharacterData => PlayerIds.Count > 0 && CharacterFiles > 0 && CharacterFiles < PlayerIds.Count;
+
     /// <summary>True when the world file could be read at all.</summary>
     public bool Readable { get; init; }
 
@@ -64,6 +80,7 @@ public sealed class SaveEvidence
             GameTimeTicks = world?.Ticks ?? 0,
             PlayerIds = ReadPlayerIds(Path.Combine(saveDir, "players.xml")),
             Regions = ReadRegions(Path.Combine(saveDir, "Region")),
+            CharacterFiles = CountCharacterFiles(Path.Combine(saveDir, "Player")),
         };
     }
 
@@ -141,6 +158,18 @@ public sealed class SaveEvidence
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         return ids;
+    }
+
+    private static int CountCharacterFiles(string playerDir)
+    {
+        try
+        {
+            return Directory.Exists(playerDir) ? Directory.GetFiles(playerDir, "*.ttp").Length : 0;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return 0;
+        }
     }
 
     private static HashSet<string> ReadRegions(string regionDir)
