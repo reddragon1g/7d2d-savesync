@@ -57,8 +57,30 @@ public sealed class ModApi : IModApi
 [HarmonyPatch(nameof(LightLOD.FrameUpdate))]
 public static class LightLodVoxelMask
 {
+    /// <summary>
+    /// Switched off with -NoLightShadowsDisable, so the same scene can be photographed with and
+    /// without the mask.
+    ///
+    /// A photograph of a lit wall means nothing on its own: it could be light bleeding through, or
+    /// it could be a pale wall under moonlight. The only way to tell is the same scene, same time,
+    /// same camera, with the one thing under test turned off.
+    /// </summary>
+    private static bool Disabled
+    {
+        get
+        {
+            foreach (var arg in System.Environment.GetCommandLineArgs())
+                if (arg.StartsWith("-NoLightShadowsDisable", System.StringComparison.OrdinalIgnoreCase))
+                    return true;
+
+            return false;
+        }
+    }
+
     public static void Postfix(LightLOD __instance)
     {
+        if (Disabled) return;
+
         if (!__instance.bPlayerPlacedLight) return;
 
         var light = __instance.myLight;

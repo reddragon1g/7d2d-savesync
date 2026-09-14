@@ -78,18 +78,27 @@ public static class TestScene
         // answer. The first attempt at this was photographed at midday and showed nothing at all.
         world.SetTimeJump(GameUtils.DayTimeToWorldTime(2, 0, 0));
 
-        var playerPos = player.position;
+        // Where the room went last time, if it has been built before.
+        //
+        // Comparing the mask on against the mask off only means something if both photographs are
+        // of the same room from the same spot. Rebuilding relative to the player drifts nine
+        // blocks further every run, because the player is left standing where the camera was put.
+        int cx, cy, cz;
 
-        // Straight out along +Z rather than wherever the player happens to face, so the room's
-        // position is known in advance and the camera can be pointed at it.
-        var flat = Vector3.forward;
+        if (!ReadRemembered(out cx, out cy, out cz))
+        {
+            var playerPos = player.position;
 
-        // Far enough that the whole room is in shot, near enough to see detail on the near wall.
-        var centre = playerPos + flat * 9f;
+            // Straight out along +Z rather than wherever the player happens to face, so the
+            // room's position is known and the camera can be pointed at it.
+            var centre = playerPos + Vector3.forward * 9f;
 
-        int cx = Mathf.FloorToInt(centre.x);
-        int cy = Mathf.FloorToInt(playerPos.y);
-        int cz = Mathf.FloorToInt(centre.z);
+            cx = Mathf.FloorToInt(centre.x);
+            cy = Mathf.FloorToInt(playerPos.y);
+            cz = Mathf.FloorToInt(centre.z);
+
+            Remember(cx, cy, cz);
+        }
 
         var light = Block.GetBlockValue(LightBlock, true);
 
@@ -121,7 +130,7 @@ public static class TestScene
         const int half = 3;
         const int height = 4;
 
-        // The doorway, punched through the wall nearest the player so the inside is visible.
+        // The doorway, punched through the wall nearest the camera so the inside is visible.
         int doorX = cx;
         int doorZ = cz - half;
 
@@ -175,5 +184,36 @@ public static class TestScene
                 + $"candle at {cx}, {cy + 1}, {cz}");
         Log.Out("[NoLightShadows] midnight, camera placed facing the doorway");
         Log.Out("[NoLightShadows] expected: light spills from the doorway, the outside walls stay dark");
+    }
+
+    private static string RememberPath => System.IO.Path.Combine(
+        System.Environment.GetFolderPath(System.Environment.SpecialFolder.ApplicationData),
+        "7DaysToDie", "nolightshadows-testroom.txt");
+
+    private static void Remember(int x, int y, int z)
+    {
+        try { System.IO.File.WriteAllText(RememberPath, $"{x} {y} {z}"); }
+        catch (System.Exception e) { Log.Warning("[NoLightShadows] could not note the room: " + e.Message); }
+    }
+
+    private static bool ReadRemembered(out int x, out int y, out int z)
+    {
+        x = y = z = 0;
+
+        try
+        {
+            if (!System.IO.File.Exists(RememberPath)) return false;
+
+            var parts = System.IO.File.ReadAllText(RememberPath).Split(' ');
+            if (parts.Length != 3) return false;
+
+            return int.TryParse(parts[0], out x)
+                   && int.TryParse(parts[1], out y)
+                   && int.TryParse(parts[2], out z);
+        }
+        catch (System.Exception)
+        {
+            return false;
+        }
     }
 }

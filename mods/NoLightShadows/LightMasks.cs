@@ -127,6 +127,14 @@ public static class LightMasks
         };
 
         light.cookie = cookie;
+
+        // Logged for the first few only. "Is this mod doing anything at all" is the question every
+        // other observation depends on, and a photograph cannot answer it - a wall can look lit
+        // because light is bleeding through it, or because it is simply a lighter colour.
+        if (Masks.Count <= 5)
+            Log.Out($"[NoLightShadows] masked light #{Masks.Count} at "
+                    + $"{inWorld.x:0.0}, {inWorld.y:0.0}, {inWorld.z:0.0}, range {light.range:0.0}");
+
         return true;
     }
 
