@@ -1,0 +1,18 @@
+<Project>
+
+  <!--
+    One version for every project in the solution.
+
+    It used to be set only on the app, so the Core library kept the SDK default of 1.0.0 - and
+    Core is what TransferEngine.ToolVersion and RemoteUpdate.RunningVersion both read. The build
+    therefore announced itself as 1.0.0 everywhere it mattered while the executable said 1.1.0.
+    That was visible in the logs from two real machines, and it silently broke updating over the
+    network outright: the offer compared 1.0.0 against 1.0.0 and was always refused as "not newer".
+
+    Bump this and nothing else.
+  -->
+  <PropertyGroup>
+    <Version>1.1.1</Version>
+  </PropertyGroup>
+
+</Project>

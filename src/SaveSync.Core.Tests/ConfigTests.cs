@@ -342,4 +342,18 @@ public class ConfigTests : IDisposable
 
         Assert.Empty(ActivityLog.OnStick(stick));
     }
+
+    [Fact]
+    public void Every_part_of_the_program_reports_the_same_version()
+    {
+        // Found on two real machines: the app was built as 1.1.0 but the library kept the SDK
+        // default of 1.0.0, and the library is what reports the version to the log, to the other
+        // PC, and to the update check. So the logs said 1.0.0, and updating over the network was
+        // dead on arrival - the offer compared 1.0.0 against 1.0.0 and was always "not newer".
+        var reported = TransferEngine.ToolVersion;
+        var used = SaveSync.Core.Lan.RemoteUpdate.RunningVersion;
+
+        Assert.Equal(used.ToString(3), reported);
+        Assert.NotEqual("1.0.0", reported);
+    }
 }

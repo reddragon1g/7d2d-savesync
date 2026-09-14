@@ -51,6 +51,9 @@ public sealed class MainForm : Form
     private readonly System.Windows.Forms.Timer _watchTimer = new();
     private readonly AutoSyncState _autoState = new();
     private AutoSyncTrigger _lastTrigger = AutoSyncTrigger.None;
+
+    /// <summary>The last thing written about the stick, so a still screen does not repeat itself.</summary>
+    private string _lastAssessment = "";
     private readonly System.Windows.Forms.Timer _housekeeping = new();
     private bool _reallyClosing;
 
@@ -834,6 +837,23 @@ public sealed class MainForm : Form
         // ---- what the two buttons do right now ----
         int outward = _plan?.ToStick.Count() ?? 0;
         int inward = _plan?.ToPc.Count() ?? 0;
+
+        // Written down because "I plugged it in and it never asked me anything" is otherwise a
+        // dead end: there is no way afterwards to tell a stick that held nothing from a scan that
+        // never happened from a scan that found things and offered them to somebody who did not
+        // press the button.
+        var assessment = _plan is null
+            ? $"no stick found (looked at {_stickRoot ?? "nothing"})"
+            : $"stick {_plan.StickRoot}: {_plan.Items.Count} save(s) seen, "
+              + $"{outward} to send, {inward} to bring here, {_plan.Conflicts.Count()} needing a person";
+
+        if (assessment != _lastAssessment)
+        {
+            _lastAssessment = assessment;
+            ActivityLog.Write(assessment);
+            foreach (var item in _plan?.Items ?? Enumerable.Empty<SyncItem>())
+                ActivityLog.Write($"  {item.Display}  ->  {item.Direction}  ({item.Reason})");
+        }
         int stickConflicts = _plan?.Conflicts.Count() ?? 0;
         int conflicts = stickConflicts + peerConflicts;
 
