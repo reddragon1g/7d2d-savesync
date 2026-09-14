@@ -616,9 +616,12 @@ public sealed class MainForm : Form
             : "Nothing here is newer than the other side",
             (canSendNet || canSendStick) && !canGetNet && !canGetStick && conflicts == 0);
 
+        int stickChoices = (_plan?.ToPc.Count() ?? 0) + (_plan?.Conflicts.Count() ?? 0);
         _receive.Title = canGetNet && !canGetStick
             ? $"Bring the newer saves from {peer!.Label}"
-            : "Put the saves from the USB stick onto this PC";
+            : canGetStick && stickChoices > 1
+                ? "Choose which saves to put on this PC"
+                : "Put the saves from the USB stick onto this PC";
         _receive.SetState(canGetNet || canGetStick,
             canGetNet ? fetchable[0].Summary
             : canGetStick ? $"{Describe(_plan!.ToPc)}{Theme.Dot}{PathUtil.HumanBytes(_plan.ToPcBytes)}"
@@ -847,11 +850,24 @@ public sealed class MainForm : Form
         var engine = _engine;
         var plan = _plan;
 
+        // More than one save on the stick means there is a real choice to make, and doing them all
+        // as one lump means a single save that needs a decision holds up the ones that do not.
+        var offered = plan.ToPc.Concat(plan.Conflicts).ToList();
+        List<SyncItem>? chosen = null;
+        if (offered.Count > 1)
+        {
+            using var picker = new PickSavesDialog(offered, i => i.Direction == SyncDirection.ToPc);
+            if (picker.ShowDialog(this) != DialogResult.OK) return;
+
+            chosen = picker.Chosen;
+            if (chosen.Count == 0) return;
+        }
+
         try
         {
             var outcome = WorkDialog.Run(this, "Putting saves on this PC",
                 "Checking every file, then installing...",
-                (p, ct) => StickSync.CopyToPc(engine, plan, p, ct));
+                (p, ct) => StickSync.CopyToPc(engine, plan, p, ct, chosen));
 
             if (outcome is null) { _summary.Text = "Stopped. Nothing was changed."; Rebuild(); return; }
 

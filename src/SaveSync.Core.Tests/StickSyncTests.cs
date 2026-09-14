@@ -223,4 +223,78 @@ public class StickSyncTests : IDisposable
         Assert.Equal(SyncDirection.ToPc, item.Direction);
         Assert.Equal(_desktop.Slot().Passport!.VersionId, item.Package!.Passport.VersionId);
     }
+
+    // ---------------------------------------------------------------- picking individual saves
+
+    [Fact]
+    public void Only_the_chosen_saves_are_brought_over()
+    {
+        // Three saves on the stick, one wanted. Before this, "put the saves on this PC" was all or
+        // nothing, so wanting two out of three meant taking the third as well - or none at all.
+        _desktop.MakeSave(world: "Navezgane", saveName: "My Game");
+        _desktop.MakeSave(world: "Navezgane", saveName: "Chris world", seed: 7);
+        _desktop.MakeSave(world: "Befedite County", saveName: "Ariels World", seed: 9);
+
+        var sender = _desktop.NewEngine();
+        foreach (var slot in SaveDiscovery.Enumerate(_desktop.Location))
+            sender.Export(slot, _stick);
+
+        var engine = _laptop.NewEngine();
+        var plan = StickSync.Build(engine, _stick);
+        Assert.Equal(3, plan.ToPc.Count());
+
+        var wanted = plan.ToPc.Where(i => i.SaveName == "Ariels World").ToList();
+        var outcome = StickSync.CopyToPc(engine, plan, null, default, wanted);
+
+        Assert.Equal("Ariels World (Befedite County)", Assert.Single(outcome.Copied));
+
+        var here = SaveDiscovery.Enumerate(_laptop.Location);
+        Assert.Equal("Ariels World", Assert.Single(here).SaveName);
+    }
+
+    [Fact]
+    public void Passing_nothing_still_means_all_of_them()
+    {
+        // Every existing caller, and the single-save case, must keep working untouched.
+        _desktop.MakeSave(world: "Navezgane", saveName: "One");
+        _desktop.MakeSave(world: "Navezgane", saveName: "Two", seed: 7);
+
+        var sender = _desktop.NewEngine();
+        foreach (var slot in SaveDiscovery.Enumerate(_desktop.Location))
+            sender.Export(slot, _stick);
+
+        var engine = _laptop.NewEngine();
+        var outcome = StickSync.CopyToPc(engine, StickSync.Build(engine, _stick));
+
+        Assert.Equal(2, outcome.Copied.Count);
+        Assert.Equal(2, SaveDiscovery.Enumerate(_laptop.Location).Count);
+    }
+
+    [Fact]
+    public void Choosing_one_save_does_not_drag_in_another_that_needs_a_decision()
+    {
+        // The whole point: a save that needs thinking about must not block the ones that do not.
+        _desktop.MakeSave(world: "Navezgane", saveName: "Shared");
+        _desktop.MakeSave(world: "Navezgane", saveName: "Clean", seed: 7);
+
+        var sender = _desktop.NewEngine();
+        foreach (var slot in SaveDiscovery.Enumerate(_desktop.Location))
+            sender.Export(slot, _stick);
+
+        // The laptop already has its own unlinked "Shared" - the case that needs a human.
+        _laptop.MakeSave(world: "Navezgane", saveName: "Shared", seed: 42);
+        var mine = Manifest.Build(_laptop.Slot(saveName: "Shared").Folder);
+
+        var engine = _laptop.NewEngine();
+        var plan = StickSync.Build(engine, _stick);
+
+        var clean = plan.ToPc.Concat(plan.Conflicts).Where(i => i.SaveName == "Clean").ToList();
+        var outcome = StickSync.CopyToPc(engine, plan, null, default, clean);
+
+        Assert.Contains(outcome.Copied, c => c.StartsWith("Clean"));
+        Assert.DoesNotContain(outcome.Copied, c => c.StartsWith("Shared"));
+
+        // And the one left alone is untouched, byte for byte.
+        Assert.Empty(mine.Verify(_laptop.Slot(saveName: "Shared").Folder));
+    }
 }

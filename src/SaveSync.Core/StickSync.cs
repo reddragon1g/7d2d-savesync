@@ -236,16 +236,29 @@ public static class StickSync
     }
 
     /// <summary>Installs every save that should come onto this PC. Conflicts are left untouched.</summary>
+    /// <param name="only">
+    /// The saves to actually bring over. Null means all of them, which is what the single-save case
+    /// and every existing caller wants. A subset is what the picker passes when somebody has three
+    /// saves on the stick and only wants two of them - previously one save that needed a decision
+    /// held up every other save on the stick.
+    /// </param>
     public static SyncOutcome CopyToPc(
         TransferEngine engine,
         StickPlan plan,
         IProgress<ScanProgress>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IEnumerable<SyncItem>? only = null)
     {
         var outcome = new SyncOutcome();
         if (plan.HasBlockers) throw new TransferBlockedException(plan.Blockers);
 
-        foreach (var item in plan.ToPc)
+        var wanted = only is null
+            ? plan.ToPc.ToList()
+            : plan.ToPc.Where(i => only.Any(o => ReferenceEquals(o, i)
+                  || (string.Equals(o.World, i.World, StringComparison.OrdinalIgnoreCase)
+                      && string.Equals(o.SaveName, i.SaveName, StringComparison.OrdinalIgnoreCase)))).ToList();
+
+        foreach (var item in wanted)
         {
             ct.ThrowIfCancellationRequested();
             if (item.PackageDir is null) continue;
@@ -271,7 +284,11 @@ public static class StickSync
             outcome.Findings.AddRange(result.Findings);
         }
 
-        outcome.NeedsChoice.AddRange(plan.Conflicts);
+        outcome.NeedsChoice.AddRange(only is null
+            ? plan.Conflicts
+            : plan.Conflicts.Where(c => only.Any(o =>
+                  string.Equals(o.World, c.World, StringComparison.OrdinalIgnoreCase)
+                  && string.Equals(o.SaveName, c.SaveName, StringComparison.OrdinalIgnoreCase))));
         return outcome;
     }
 }
