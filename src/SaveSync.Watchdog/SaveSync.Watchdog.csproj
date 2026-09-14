@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <CodePage>65001</CodePage>
+    <DebugType>embedded</DebugType>
+
+    <AssemblyName>SaveSyncWatchdog</AssemblyName>
+    <RootNamespace>SaveSync.Watchdog</RootNamespace>
+    <Product>7 Days to Die Save Transfer Watchdog</Product>
+
+    <!-- No window at all. It has nothing to show and nobody to show it to. -->
+    <UseWindowsForms>false</UseWindowsForms>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SaveSync.Core\SaveSync.Core.csproj" />
+  </ItemGroup>
+
+</Project>

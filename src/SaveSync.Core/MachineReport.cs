@@ -47,7 +47,7 @@ public sealed class MachineReport
             Cpu = RegistryString(
                       @"HARDWARE\DESCRIPTION\System\CentralProcessor\0", "ProcessorNameString") ?? "unknown",
             Cores = Environment.ProcessorCount,
-            Gpu = FirstGpu() ?? "unknown",
+            Gpu = string.Join(" + ", AllGpus()),
             TotalMemoryBytes = Memory().Total,
             FreeMemoryBytes = Memory().Free,
             SavesDriveFreeBytes = location is null ? -1 : FileOps.FreeSpace(location.SavesDir),
@@ -110,7 +110,42 @@ public sealed class MachineReport
         }
     }
 
-    /// <summary>The first display adapter Windows lists. Enough to say what class of machine it is.</summary>
+    /// <summary>
+    /// EVERY display adapter, not just the first.
+    ///
+    /// Reporting one was actively misleading: a laptop showing "Intel UHD Graphics" is usually a
+    /// laptop with a perfectly good discrete card sitting idle beside it, and the difference
+    /// between those two situations is the difference between "this machine cannot run the game"
+    /// and "the game is pointed at the wrong chip".
+    /// </summary>
+    private static List<string> AllGpus()
+    {
+        var found = new List<string>();
+        try
+        {
+            const string root = @"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}";
+            using var key = Registry.LocalMachine.OpenSubKey(root);
+            if (key is null) return found;
+
+            foreach (var name in key.GetSubKeyNames())
+            {
+                if (!int.TryParse(name, out _)) continue;
+
+                using var adapter = key.OpenSubKey(name);
+                if (adapter?.GetValue("DriverDesc") is string desc
+                    && !string.IsNullOrWhiteSpace(desc)
+                    && !found.Contains(desc, StringComparer.OrdinalIgnoreCase))
+                {
+                    found.Add(desc);
+                }
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException) { }
+
+        if (found.Count == 0) found.Add("unknown");
+        return found;
+    }
+
     private static string? FirstGpu()
     {
         try
@@ -181,9 +216,33 @@ public sealed class GameStats
     public string PlayedFor { get; init; } = "";
     public DateTimeOffset At { get; init; }
 
+    /// <summary>
+    /// What the frame rate has actually been doing, not just its last value.
+    ///
+    /// The last line is the worst one to judge by: the game writes a sample every thirty seconds
+    /// including while a world is loading and while it is shutting down, so the final reading of a
+    /// session is routinely single digits and says nothing at all about playing. A run of samples,
+    /// with the worst and best of them, is the difference between a measurement and a guess.
+    /// </summary>
+    public int SampleCount { get; init; }
+    public double FpsLow { get; init; }
+    public double FpsHigh { get; init; }
+    public double FpsTypical { get; init; }
+    public DateTimeOffset SampledFrom { get; init; }
+
     public string Describe()
-        => $"Game: {Fps:0.0} fps  -  {Players} player(s), {Zombies} zombies, {Entities} entities  -  "
-           + $"{Chunks} chunks loaded  -  memory {RssMb:0} MB  -  measured {At.ToLocalTime():HH:mm:ss}";
+    {
+        var last = $"Game: last sample {Fps:0.0} fps at {At.ToLocalTime():HH:mm:ss}  -  "
+                   + $"{Players} player(s), {Zombies} zombies, {Chunks} chunks, memory {RssMb:0} MB";
+
+        if (SampleCount <= 1) return last + "  (one sample only - not worth much)";
+
+        return last + Environment.NewLine
+               + $"      over {SampleCount} samples ({SampledFrom.ToLocalTime():HH:mm:ss}-{At.ToLocalTime():HH:mm:ss}): "
+               + $"typical {FpsTypical:0.0} fps, worst {FpsLow:0.0}, best {FpsHigh:0.0}"
+               + Environment.NewLine
+               + "      (loading and quitting drag the worst down; judge by the typical figure)";
+    }
 
     /// <summary>
     /// The most recent line of the form the game writes every thirty seconds:
@@ -209,13 +268,30 @@ public sealed class GameStats
             var tail = Tail(newest.FullName, 128 * 1024);
             if (tail.Length == 0) return null;
 
-            GameStats? latest = null;
+            var samples = new List<GameStats>();
             foreach (var line in tail.Split('\n'))
             {
                 var parsed = Parse(line, newest.LastWriteTimeUtc);
-                if (parsed is not null) latest = parsed;
+                if (parsed is not null) samples.Add(parsed);
             }
-            return latest;
+
+            if (samples.Count == 0) return null;
+
+            var recent = samples.TakeLast(40).ToList();
+            var rates = recent.Select(r => r.Fps).OrderBy(f => f).ToList();
+            var last = recent[^1];
+
+            return new GameStats
+            {
+                Fps = last.Fps, HeapMb = last.HeapMb, RssMb = last.RssMb,
+                Chunks = last.Chunks, Players = last.Players, Zombies = last.Zombies,
+                Entities = last.Entities, PlayedFor = last.PlayedFor, At = last.At,
+                SampleCount = recent.Count,
+                SampledFrom = recent[0].At,
+                FpsLow = rates[0],
+                FpsHigh = rates[^1],
+                FpsTypical = rates[rates.Count / 2],   // the middle one, so a loading dip cannot skew it
+            };
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
