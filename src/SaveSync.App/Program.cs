@@ -155,43 +155,33 @@ internal static class Program
 
         var store = ProfileStore.Load();
 
-        // Started with Windows, or started by a copy handing over to this one: we already know who
-        // it is, so do not ask. Otherwise ask, which is always the first thing a person sees.
+        // Nothing waits on a person to say who they are.
         //
-        // A handover that stopped to ask was the whole failure. Nobody is standing there to answer
-        // it - the copy that launched this one has already gone - so the question sits unanswered
-        // on the screen, the main window is never created, and with it neither is the listener.
-        // The PC then looks perfectly healthy to anybody walking past and is unreachable from
-        // everywhere, which is exactly how it appeared.
+        // The question used to come first, and everything else - the listener, discovery, the
+        // watcher, all of it - lived behind it inside the main window. So a copy that came up at
+        // that question was not "a program waiting for input", it was a PC that had silently
+        // dropped off the network with no sign of it, and only somebody walking over and clicking
+        // a name could bring it back. That is the wrong shape: the network side is the part that
+        // has to keep working whether or not anybody is looking at it.
+        //
+        // So a name is always resolved without asking - the last one used, or anyone on record, or
+        // this machine's own user. The window still asks on a genuine first run, but by then
+        // everything is already up and the answer only changes a label.
         bool handingOver = Has("--handover");
 
-        var profile = background || handingOver
-            ? store.ById(config.LastProfileId) ?? store.Profiles.FirstOrDefault()
-            : null;
-
-        if (profile is null && handingOver)
-        {
-            // Handed over to, and there is genuinely nobody on record. Asking is still wrong -
-            // nobody is there - so carry on as whoever this machine is and let the person choose
-            // later from the window. Being reachable matters more than being correctly labelled.
-            profile = store.Add(Machine.User);
-            config.LastProfileId = profile.Id;
-            try { store.Save(); config.Save(); } catch (IOException) { }
-        }
+        var profile = store.ById(config.LastProfileId) ?? store.Profiles.FirstOrDefault();
+        bool askWhoLater = profile is null && !background && !handingOver;
 
         if (profile is null)
         {
-            using var picker = new ProfileForm(store, config.LastProfileId);
-            picker.ShowDialog();
-            if (picker.Selected is null) return 0;
-
-            profile = picker.Selected;
-            config.LastProfileId = profile.Id;
-            try { config.Save(); } catch (IOException) { }
-            background = false;
+            profile = store.Add(Machine.User);
+            try { store.Save(); } catch (IOException) { }
         }
 
-        Application.Run(new MainForm(config, profile, initial, startHidden: background));
+        config.LastProfileId = profile.Id;
+        try { config.Save(); } catch (IOException) { }
+
+        Application.Run(new MainForm(config, profile, initial, startHidden: background, askWho: askWhoLater));
         return 0;
     }
 

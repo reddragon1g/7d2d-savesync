@@ -17,7 +17,8 @@ public sealed class MainForm : Form
     private const int PadX = 28;
 
     private readonly AppConfig _config;
-    private readonly Profile _profile;
+    /// <summary>Who is using this copy. Changeable: it is a label, and labels get corrected.</summary>
+    private Profile _profile;
 
     private GameLocation? _location;
     private TransferEngine? _engine;
@@ -57,6 +58,9 @@ public sealed class MainForm : Form
 
     /// <summary>When it is worth trying to start networking again after a failure.</summary>
     private DateTimeOffset? _networkRetryAt;
+
+    /// <summary>A genuine first run: ask who this is, but only once everything else is up.</summary>
+    private bool _askWho;
     private readonly System.Windows.Forms.Timer _housekeeping = new();
     private bool _reallyClosing;
 
@@ -73,12 +77,14 @@ public sealed class MainForm : Form
     /// </summary>
     public const string ShowRequestEventName = "SaveSync.7DaysToDie.ShowWindow";
 
-    public MainForm(AppConfig config, Profile profile, string? initialStick = null, bool startHidden = false)
+    public MainForm(AppConfig config, Profile profile, string? initialStick = null, bool startHidden = false,
+        bool askWho = false)
     {
         _config = config;
         _profile = profile;
         _stickRoot = initialStick;
         StartHidden = startHidden;
+        _askWho = askWho;
 
         Text = "7 Days to Die - Save Transfer";
         BackColor = Theme.Background;
@@ -124,7 +130,15 @@ public sealed class MainForm : Form
 
         if (_started) return;
         _started = true;
-        BeginInvoke(Startup);
+        BeginInvoke(() =>
+        {
+            Startup();
+
+            // Asked AFTER everything is running, never before. On a first run this is still the
+            // first thing a person sees - but the listener is already up behind it, so a PC left
+            // sitting on this question is reachable rather than invisible.
+            if (_askWho && !StartHidden) BeginInvoke(AskWhoOnFirstRun);
+        });
     }
 
     /// <summary>Started with Windows: sit in the tray rather than jumping in front of the user.</summary>
@@ -1607,6 +1621,41 @@ public sealed class MainForm : Form
     /// when somebody arrives somewhere and finds an old save - and the one thing that was
     /// impossible to find out before this existed.
     /// </summary>
+    /// <summary>
+    /// The first-run "who is using this?" question, asked once the program is already working.
+    ///
+    /// Declining it is fine: a name was already chosen automatically, and a name is only a label -
+    /// it says who last played a save and nothing else decides anything by it.
+    /// </summary>
+    private void AskWhoOnFirstRun()
+    {
+        _askWho = false;
+
+        try
+        {
+            var store = ProfileStore.Load();
+            using var picker = new ProfileForm(store, _config.LastProfileId);
+            picker.ShowDialog(this);
+
+            if (picker.Selected is null) return;
+
+            _profile = picker.Selected;
+            _config.LastProfileId = _profile.Id;
+            try { _config.Save(); } catch (IOException) { }
+
+            if (_engine is not null) _engine.Identity = _profile.Name;
+            if (_discovery is not null) _discovery.PersonName = _profile.Name;
+            if (_watcher is not null) _watcher.PersonName = _profile.Name;
+
+            ActivityLog.Write($"who is using this: {_profile.Name}");
+            Rebuild();
+        }
+        catch (Exception ex)
+        {
+            ActivityLog.Write("could not ask who is using this", ex);
+        }
+    }
+
     private void ShowActivityLog()
     {
         var path = ActivityLog.FilePath;
