@@ -556,12 +556,23 @@ public sealed class TransferEngine
                 + $"({PathUtil.HumanBytes(modPlan.InstallBytes)})."));
         }
 
-        int kept = modPlan.Differing.Count();
-        if (kept > 0)
+        var differing = modPlan.Differing.ToList();
+        if (differing.Count > 0)
         {
-            plan.Findings.Add(new Finding(Severity.Info,
-                $"{kept} mod{(kept == 1 ? " is" : "s are")} already installed here in a different version or with "
-                + "different settings. Yours will be left exactly as they are."));
+            // A warning, not a note. Keeping this PC's copy is the right default - it holds this
+            // PC's settings - but a save played against one version of a mod and loaded against
+            // another is a real way to end up with a world that misbehaves, and the person has to
+            // be able to see WHICH mods, not just how many.
+            var named = string.Join(", ", differing.Select(d =>
+                d.Local is null
+                    ? d.Incoming.Describe()
+                    : $"{d.Incoming.Label} (that save used {OrUnknown(d.Incoming.Version)}, "
+                      + $"this PC has {OrUnknown(d.Local.Version)})"));
+
+            plan.Findings.Add(new Finding(Severity.Warning,
+                $"{differing.Count} mod{(differing.Count == 1 ? "" : "s")} already here but not the same: "
+                + named + ". This PC's copy is being kept, because it holds this PC's settings. "
+                + "If the save misbehaves, that difference is the first thing to look at."));
         }
 
         if (localDirty && Lineage.IsSafeToApply(relation))
@@ -829,10 +840,31 @@ public sealed class TransferEngine
         var modsRoot = PackageLayout.Mods(plan.PackageDir);
         if (!Directory.Exists(modsRoot)) return;
 
+        // Every mod, and what was decided about it. "1 mod was installed" out of four carried is
+        // either exactly right or quietly wrong, and there is no way to tell which from a number.
+        foreach (var item in modPlan.Items)
+        {
+            ActivityLog.Write(item.Action switch
+            {
+                ModAction.Install => $"  mod {item.Incoming.Describe()}: not on this PC, installing it",
+                ModAction.Identical => $"  mod {item.Incoming.Describe()}: already here and identical, skipped",
+                ModAction.KeepExisting => $"  mod {item.Incoming.Describe()}: already here as "
+                                          + $"{item.Local?.Describe() ?? "another version"}, keeping this PC's copy",
+                _ => $"  mod {item.Incoming.Describe()}: {item.Action}",
+            });
+        }
+
+        foreach (var extra in modPlan.ExtraHere)
+            ActivityLog.Write($"  mod {extra.Describe()}: only on this PC, left alone");
+
         var wanted = modPlan.Items
             .Where(i => i.Action == ModAction.Install || (i.Action == ModAction.KeepExisting && i.ReplaceApproved))
             .ToList();
-        if (wanted.Count == 0) return;
+        if (wanted.Count == 0)
+        {
+            ActivityLog.Write("  no mods needed installing");
+            return;
+        }
 
         // Same rule as the save: nothing is installed from a package until every byte checks out.
         var modManifest = Json.ReadFile<Manifest>(PackageLayout.ModsManifest(plan.PackageDir));
@@ -925,6 +957,7 @@ public sealed class TransferEngine
 
         Directory.Move(partial, target);
         result.ModsInstalled.Add(item.Incoming.Label);
+        ActivityLog.Write($"  mod {item.Incoming.Describe()} installed at {target}");
     }
 
     private void InstallGeneratedWorldIfNeeded(
@@ -1005,6 +1038,9 @@ public sealed class TransferEngine
             string.Equals(s.World, incoming.World, StringComparison.OrdinalIgnoreCase)
             && string.Equals(s.SaveName, incoming.SaveName, StringComparison.OrdinalIgnoreCase));
     }
+
+    private static string OrUnknown(string version)
+        => string.IsNullOrWhiteSpace(version) ? "no version" : version;
 
     private static string Shorten(string value, int length)
         => string.IsNullOrEmpty(value) ? "x" : value.Length <= length ? value : value[..length];
