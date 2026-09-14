@@ -137,7 +137,8 @@ public sealed class LanServer : IDisposable
                     // waiting for a second request that was never coming.
                     if (request.Op is "hello" or "pair" or "list-saves" or "request-send"
                         or "get-log" or "update-offer" or "update-file"
-                        or "inbox-list" or "inbox-keep-both" or "restart" or "rename-save") return;
+                        or "inbox-list" or "inbox-keep-both" or "restart" or "rename-save"
+                        or "get-machine") return;
                 }
             }
             catch (OperationCanceledException) { }
@@ -172,6 +173,7 @@ public sealed class LanServer : IDisposable
         {
             "list-saves" => ListSaves(),
             "get-log" => GetLog(),
+            "get-machine" => GetMachine(),
             "inbox-list" => InboxList(),
             "inbox-keep-both" => InboxKeepBoth(request),
             "restart" => Restart(request),
@@ -280,9 +282,11 @@ public sealed class LanServer : IDisposable
         if (RestartRequested is null)
             return LanResponse.Fail("This PC cannot restart itself.");
 
-        var blockers = TransferEngine.GlobalBlockers();
-        if (blockers.Count > 0) return LanResponse.Fail(blockers[0].Message);
-
+        // Deliberately NOT blocked by the game being open. That guard exists to stop a save being
+        // copied while the game has it open; restarting this program touches no save at all, and
+        // refusing to do it during a play session means a PC cannot be brought up to date for
+        // however long somebody is playing - which is exactly when it is least convenient to walk
+        // over to it.
         if (!_sessions.IsEmpty)
             return LanResponse.Fail("A transfer is going on here right now.");
 
@@ -324,6 +328,22 @@ public sealed class LanServer : IDisposable
         {
             return new List<string>();
         }
+    }
+
+    /// <summary>What this PC is, and how the game is behaving on it right now.</summary>
+    private LanResponse GetMachine()
+    {
+        var engine = _engineProvider();
+        var report = MachineReport.Read(engine?.Location);
+
+        return new LanResponse
+        {
+            Ok = true,
+            MachineId = _config.MachineId,
+            DisplayName = _config.DisplayName,
+            ToolVersion = TransferEngine.ToolVersion,
+            InboxJson = Json.Write(report),
+        };
     }
 
     /// <summary>Everything on this PC that is waiting for somebody to decide about it.</summary>

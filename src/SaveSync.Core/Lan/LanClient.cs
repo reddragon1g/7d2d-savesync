@@ -284,6 +284,14 @@ public sealed class LanClient
         return (response.Ok, response.Ok ? response.Message ?? "Restarting." : response.Error ?? "Refused.");
     }
 
+    /// <summary>What another PC is, and how the game is running on it.</summary>
+    public async Task<MachineReport?> MachineAsync(LanPeer peer, string senderName, CancellationToken ct = default)
+    {
+        var response = await SimpleAsync(peer, "get-machine", senderName, null, null, ct).ConfigureAwait(false);
+        if (response is null || !response.Ok || response.InboxJson is null) return null;
+        return Json.Read<MachineReport>(response.InboxJson);
+    }
+
     /// <summary>What is waiting for a person on another PC.</summary>
     public async Task<List<WaitingSave>?> InboxAsync(LanPeer peer, string senderName, CancellationToken ct = default)
     {
