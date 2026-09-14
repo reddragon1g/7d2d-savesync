@@ -26,6 +26,78 @@ public static class Installer
 
     public static bool IsInstalled => File.Exists(InstalledExe);
 
+    /// <summary>The version of this running program.</summary>
+    public static Version ThisVersion =>
+        typeof(Installer).Assembly.GetName().Version ?? new Version(0, 0);
+
+    /// <summary>The version already installed on this PC, or null when nothing is installed.</summary>
+    public static Version? InstalledVersion
+    {
+        get
+        {
+            if (!IsInstalled) return null;
+            try
+            {
+                var info = FileVersionInfo.GetVersionInfo(InstalledExe);
+                return Version.TryParse(info.FileVersion, out var v) ? v : null;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                return null;
+            }
+        }
+    }
+
+    /// <summary>True when the copy installed here is older than the one running now.</summary>
+    public static bool InstalledIsOlder => InstalledVersion is { } v && v < ThisVersion;
+
+    /// <summary>
+    /// Closes the installed copy so it can be replaced.
+    ///
+    /// An installed copy starts with Windows and sits in the tray, so during an update it is
+    /// always running and always holding the single-instance slot. Asking politely first means it
+    /// shuts down its listener and saves its settings; killing is the fallback, and the worst it
+    /// can cost is a half-written settings file, which is written atomically anyway.
+    /// </summary>
+    public static bool StopInstalledCopy(TimeSpan timeout)
+    {
+        bool stoppedAny = false;
+        var deadline = DateTime.UtcNow + timeout;
+
+        foreach (var p in SafeProcesses())
+        {
+            try
+            {
+                if (!PathUtil.SamePath(p.MainModule?.FileName ?? "", InstalledExe)) continue;
+                if (p.Id == Environment.ProcessId) continue;
+
+                stoppedAny = true;
+                p.CloseMainWindow();
+
+                while (DateTime.UtcNow < deadline && !p.HasExited) Thread.Sleep(100);
+                if (!p.HasExited) p.Kill(entireProcessTree: true);
+                p.WaitForExit((int)Math.Max(1000, (deadline - DateTime.UtcNow).TotalMilliseconds));
+            }
+            catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception
+                                      or NotSupportedException or IOException)
+            {
+                // A process that vanished, or one this user may not touch. Either way, move on.
+            }
+            finally { p.Dispose(); }
+        }
+
+        return stoppedAny;
+    }
+
+    private static Process[] SafeProcesses()
+    {
+        try { return Process.GetProcessesByName("SaveSync"); }
+        catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return Array.Empty<Process>();
+        }
+    }
+
     /// <summary>True when this process is the installed copy rather than the one on the stick.</summary>
     public static bool RunningInstalled =>
         PathUtil.SamePath(Path.GetDirectoryName(Environment.ProcessPath ?? "") ?? "", InstallDir);
@@ -56,6 +128,10 @@ public static class Installer
                      ?? throw new InvalidOperationException("Cannot work out where this program is running from.");
 
         Directory.CreateDirectory(InstallDir);
+
+        // An installed copy is running almost by definition - it starts with Windows. It has to go
+        // before its file can be replaced, and before the new one can claim the single-instance slot.
+        StopInstalledCopy(TimeSpan.FromSeconds(10));
 
         // Copying onto a running executable fails, so the old one is moved aside first and
         // cleaned up on the next launch.

@@ -838,10 +838,29 @@ public sealed class MainForm : Form
     {
         if (_engine is null || _busy) return;
 
-        var fetchable = _news.Where(n => n.WorthFetching).ToList();
-        if (fetchable.Count > 0 && _watcher is not null)
+        // Everything the other PC is offering, whether or not it can be taken automatically, so a
+        // save that needs a decision is at least visible rather than silently missing from the list.
+        var offeredOverNetwork = _news
+            .Where(n => n.WorthFetching || n.Direction == SyncDirection.Conflict)
+            .ToList();
+
+        if (offeredOverNetwork.Count > 0 && _watcher is not null)
         {
-            FetchOverNetwork(fetchable);
+            var wanted = offeredOverNetwork.Where(n => n.WorthFetching).ToList();
+
+            if (offeredOverNetwork.Count > 1)
+            {
+                using var picker = new PickSavesDialog(offeredOverNetwork
+                    .Select(n => new PickItem(
+                        n.Remote.SaveName, n.Remote.World, n.Summary, n.Remote.SizeBytes, n.WorthFetching, n))
+                    .ToList());
+
+                if (picker.ShowDialog(this) != DialogResult.OK) return;
+                wanted = picker.ChosenAs<PeerNews>();
+            }
+
+            if (wanted.Count == 0) return;
+            FetchOverNetwork(wanted);
             return;
         }
 
@@ -856,10 +875,14 @@ public sealed class MainForm : Form
         List<SyncItem>? chosen = null;
         if (offered.Count > 1)
         {
-            using var picker = new PickSavesDialog(offered, i => i.Direction == SyncDirection.ToPc);
+            using var picker = new PickSavesDialog(offered
+                .Select(i => new PickItem(
+                    i.SaveName, i.World, i.Reason, i.Bytes, i.Direction == SyncDirection.ToPc, i))
+                .ToList());
+
             if (picker.ShowDialog(this) != DialogResult.OK) return;
 
-            chosen = picker.Chosen;
+            chosen = picker.ChosenAs<SyncItem>();
             if (chosen.Count == 0) return;
         }
 

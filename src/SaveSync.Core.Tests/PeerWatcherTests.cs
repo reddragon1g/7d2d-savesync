@@ -321,4 +321,66 @@ public class PeerWatcherTests : IDisposable
 
         Assert.Empty(watcher.News);
     }
+
+    // ------------------------------------------------ a save that has never been copied anywhere
+
+    [Fact]
+    public async Task A_save_the_other_pc_has_and_this_one_does_not_is_offered_even_if_it_was_never_copied()
+    {
+        // The case this exists for: install on a second PC and the first PC's saves are all
+        // "never copied anywhere", because nothing has ever moved yet. Reporting those as
+        // nothing-to-do meant a fresh laptop looked at a desktop full of saves and offered none
+        // of them - which is exactly the moment everything needs offering.
+        _laptop.MakeSave(world: "Navezgane", saveName: "Never Moved");
+        Assert.Null(_laptop.Slot(saveName: "Never Moved").Passport);
+
+        var desktop = Bring(_desktop, "Ryan");
+        var laptop = Bring(_laptop, "Ryan");
+        _desktopServer = desktop.Server;
+        _laptopServer = laptop.Server;
+
+        var watcher = new PeerWatcher(_desktop.Config, () => new[] { laptop.AsPeer }, () => desktop.Engine)
+        {
+            PersonName = "Ryan",
+            ReplyPort = desktop.Server.Port,
+        };
+
+        await watcher.PollAsync();
+
+        var news = Assert.Single(watcher.News);
+        Assert.Equal(SyncDirection.ToPc, news.Direction);
+        Assert.True(news.WorthFetching, "a save this PC does not have must be offered, passport or not");
+        Assert.Equal("Never Moved", news.Remote.SaveName);
+    }
+
+    [Fact]
+    public async Task It_can_actually_fetch_a_save_that_has_no_id_yet()
+    {
+        // Offering it is only half of it - a request names a save by its id, and a save that has
+        // never been copied has no id. Without addressing by name too, the offer led nowhere.
+        _laptop.MakeSave(world: "Navezgane", saveName: "Never Moved");
+        var laptopCopy = Manifest.Build(_laptop.Slot(saveName: "Never Moved").Folder);
+
+        var desktop = Bring(_desktop, "Ryan");
+        var laptop = Bring(_laptop, "Ryan");
+        _desktopServer = desktop.Server;
+        _laptopServer = laptop.Server;
+
+        var watcher = new PeerWatcher(_desktop.Config, () => new[] { laptop.AsPeer }, () => desktop.Engine)
+        {
+            PersonName = "Ryan",
+            ReplyPort = desktop.Server.Port,
+        };
+
+        await watcher.PollAsync();
+        var news = Assert.Single(watcher.News);
+
+        Assert.True(await watcher.FetchAsync(news));
+
+        var landed = Path.Combine(_desktop.Location.SavesDir, "Navezgane", "Never Moved");
+        Assert.True(await WaitUntilAsync(() => Directory.Exists(landed) && laptopCopy.Verify(landed).Count == 0,
+            TimeSpan.FromSeconds(60)), WhyNotArrived(desktop.Engine));
+
+        Assert.Empty(laptopCopy.Verify(landed));
+    }
 }

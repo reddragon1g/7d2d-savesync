@@ -68,7 +68,8 @@ public sealed class PeerWatcher : IDisposable
 
     /// <summary>Asks the other PC to send a save over. It lands in the inbox, never straight into the game.</summary>
     public Task<bool> FetchAsync(PeerNews news, CancellationToken ct = default)
-        => _client.RequestSendAsync(news.Peer, news.Remote.SaveId, ReplyPort, PersonName, ct);
+        => _client.RequestSendAsync(news.Peer, news.Remote.SaveId, ReplyPort, PersonName, ct,
+            news.Remote.World, news.Remote.SaveName);
 
     private async Task LoopAsync(CancellationToken ct)
     {
@@ -162,17 +163,10 @@ public sealed class PeerWatcher : IDisposable
         // answer from the one the user would have got carrying a stick across the room.
         bool localDirty = local is not null && TransferEngine.LooksChangedSinceCommit(local);
 
-        if (remote.Passport is null)
-        {
-            return new PeerNews
-            {
-                Peer = peer, Remote = remote, Local = local,
-                Relation = Relation.Unregistered,
-                Direction = SyncDirection.UpToDate,
-                Summary = $"{peer.Label} has a save that has never been copied anywhere.",
-            };
-        }
-
+        // Order matters. "This PC does not have it at all" is the plainest fact available and has
+        // to win: checking the passport first meant a save the other PC had and this one did not
+        // was reported as nothing-to-do purely because it had never been copied before - which is
+        // true of every save until the first time it moves.
         if (local is null)
         {
             return new PeerNews
@@ -180,7 +174,22 @@ public sealed class PeerWatcher : IDisposable
                 Peer = peer, Remote = remote, Local = null,
                 Relation = Relation.NoLocal,
                 Direction = SyncDirection.ToPc,
-                Summary = $"{peer.Label} has a save this PC does not have.",
+                Summary = remote.Passport is null
+                    ? $"{peer.Label} has a save this PC does not have. It has never been copied "
+                      + "anywhere before, so it will be set up on the way across."
+                    : $"{peer.Label} has a save this PC does not have.",
+            };
+        }
+
+        if (remote.Passport is null)
+        {
+            return new PeerNews
+            {
+                Peer = peer, Remote = remote, Local = local,
+                Relation = Relation.Unregistered,
+                Direction = SyncDirection.Conflict,
+                Summary = $"Both PCs have a save called {remote.SaveName}, and {peer.Label}'s has "
+                          + "never been copied anywhere, so nobody can tell which is newer.",
             };
         }
 

@@ -32,7 +32,13 @@ public sealed class TestEnv : IDisposable
             Provenance = "test",
         };
 
-        Config = new AppConfig { SnapshotsToKeep = 5 };
+        // Pinned inside this test's own folder. Peering writes the config back to disk, and
+        // without this a LAN test saved its loopback peer over the real user's settings.
+        Config = new AppConfig
+        {
+            SnapshotsToKeep = 5,
+            SourcePath = Path.Combine(Root, "config.json"),
+        };
 
         // Tests must never depend on whether the real game happens to be open. Each test that
         // deliberately flips this switch restores it in a finally block.

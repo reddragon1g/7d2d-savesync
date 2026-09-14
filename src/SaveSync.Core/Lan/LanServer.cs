@@ -266,7 +266,9 @@ public sealed class LanServer : IDisposable
         var blockers = TransferEngine.GlobalBlockers();
         if (blockers.Count > 0) return LanResponse.Fail(blockers[0].Message);
 
-        if (string.IsNullOrWhiteSpace(request.SaveId)) return LanResponse.Fail("No save was named.");
+        bool named = !string.IsNullOrWhiteSpace(request.SaveId)
+                     || (!string.IsNullOrWhiteSpace(request.World) && !string.IsNullOrWhiteSpace(request.SaveName));
+        if (!named) return LanResponse.Fail("No save was named.");
 
         var peer = new LanPeer
         {
@@ -277,19 +279,32 @@ public sealed class LanServer : IDisposable
             LastSeen = DateTimeOffset.UtcNow,
         };
 
-        var saveId = request.SaveId!;
-        _ = Task.Run(() => SendOnRequestAsync(engine, peer, saveId));
+        var saveId = request.SaveId ?? "";
+        var world = request.World ?? "";
+        var saveName = request.SaveName ?? "";
+        _ = Task.Run(() => SendOnRequestAsync(engine, peer, saveId, world, saveName));
 
         return new LanResponse { Ok = true, Message = "Sending." };
     }
 
-    private async Task SendOnRequestAsync(TransferEngine engine, LanPeer peer, string saveId)
+    private async Task SendOnRequestAsync(
+        TransferEngine engine, LanPeer peer, string saveId, string world, string saveName)
     {
         string? outbox = null;
         try
         {
-            var slot = SaveDiscovery.Enumerate(engine.Location)
-                .FirstOrDefault(s => s.Passport?.SaveId == saveId);
+            var all = SaveDiscovery.Enumerate(engine.Location);
+
+            // By id when there is one - that survives a rename. By name when there is not, which is
+            // the case for a save that has never been copied off this machine.
+            var slot = !string.IsNullOrWhiteSpace(saveId)
+                ? all.FirstOrDefault(s => string.Equals(s.Passport?.SaveId, saveId, StringComparison.OrdinalIgnoreCase))
+                : null;
+
+            slot ??= all.FirstOrDefault(s =>
+                string.Equals(s.World, world, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(s.SaveName, saveName, StringComparison.OrdinalIgnoreCase));
+
             if (slot is null) return;
 
             outbox = Path.Combine(engine.Workspace.Staging, "outgoing-" + Guid.NewGuid().ToString("N"));

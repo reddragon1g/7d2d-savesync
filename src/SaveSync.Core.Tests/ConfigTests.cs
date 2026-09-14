@@ -136,4 +136,54 @@ public class ConfigTests : IDisposable
 
         Assert.Equal(local, AppFolders.Choose(beside, local));
     }
+
+    [Fact]
+    public void A_config_writes_back_to_its_own_file_and_nowhere_else()
+    {
+        // The regression this exists for: a LAN test paired with a loopback peer, the pairing code
+        // saved the config, and AppConfig.Save wrote to the one real user settings file - so a test
+        // run replaced the actual user's machine identity and peer list.
+        var mine = Path.Combine(_dir, "mine", "config.json");
+
+        var cfg = new AppConfig { SourcePath = mine, DisplayName = "TEST-ONLY" };
+        cfg.RememberPeer("loopback0001", "LAPTOP", "127.0.0.1").Secret = "not-a-real-secret";
+        cfg.Save();
+
+        Assert.True(File.Exists(mine));
+        Assert.Equal("TEST-ONLY", Json.ReadFile<AppConfig>(mine)!.DisplayName);
+
+        // And nothing leaked into the place a defaulted config would have gone.
+        Assert.NotEqual(PathUtil.Normalize(mine), PathUtil.Normalize(AppFolders.ConfigPath));
+    }
+
+    [Fact]
+    public void An_upgrade_turns_an_old_backup_limit_into_keep_everything()
+    {
+        // Older versions wrote a count into the settings file. Reading that back would keep the old
+        // count-based pruning alive forever on every PC that had ever run one of them - so the
+        // promise on the window ("nothing is ever deleted") would stay false exactly where it had
+        // already been false, and silently.
+        var path = Path.Combine(_dir, "old", "config.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "{ \"schema\": 1, \"snapshotsToKeep\": 10, \"displayName\": \"OLD-PC\" }");
+
+        var cfg = Json.ReadFile<AppConfig>(path)!;
+        cfg.SourcePath = path;
+        Assert.Equal(10, cfg.SnapshotsToKeep);
+
+        cfg.UpgradeFromOlderVersion();
+
+        Assert.Equal(0, cfg.SnapshotsToKeep);
+        Assert.Equal("OLD-PC", cfg.DisplayName);   // everything else is left alone
+    }
+
+    [Fact]
+    public void Upgrading_leaves_a_limit_the_user_chose_themselves_alone()
+    {
+        // Only the old default is cleared. Somebody who deliberately set a small number because
+        // their drive is full must not have it silently undone.
+        var cfg = new AppConfig { SnapshotsToKeep = 3, SettingsVersion = AppConfig.CurrentSettingsVersion };
+        cfg.UpgradeFromOlderVersion();
+        Assert.Equal(3, cfg.SnapshotsToKeep);
+    }
 }

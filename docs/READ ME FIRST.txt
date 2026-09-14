@@ -35,6 +35,22 @@ When you open it there are two buttons near the top:
 Do both on both PCs and you can mostly forget the stick exists.
 
 
+BOTH PCs WORK OUT WHO HAS WHAT, BY THEMSELVES
+---------------------------------------------
+Once both PCs have the program and network access, they find each other on
+their own - no codes, no setup. They check every 15 seconds, so if one is off
+or asleep it simply keeps looking until it comes back.
+
+Each PC lists every save it has. Anything the other one is missing shows up as
+something you can copy over - including saves that have never been copied
+before. You pick which ones you want; they are never lumped together.
+
+The first time a save is copied it gets set up on the way across. After that
+both PCs know it and can tell which is newer on their own.
+
+If the network is not working, the USB stick does exactly the same job.
+
+
 WHAT NORMALLY HAPPENS AFTER THAT
 --------------------------------
   1. Play on the laptop, anywhere, even with no internet.

@@ -126,6 +126,16 @@ public sealed class LanRequest
     // push-begin
     public string? SaveId { get; set; }
     public string? SaveLabel { get; set; }
+
+    /// <summary>
+    /// Names the save when it has no id yet.
+    ///
+    /// A save that has never been copied anywhere has no SaveId - an id is minted the first time
+    /// it is packaged. Addressing purely by id therefore made exactly the saves that most need
+    /// moving, the ones that have never moved, impossible to ask for.
+    /// </summary>
+    public string? World { get; set; }
+    public string? SaveName { get; set; }
     public int FileCount { get; set; }
     public long TotalBytes { get; set; }
 

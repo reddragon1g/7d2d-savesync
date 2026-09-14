@@ -135,7 +135,8 @@ public sealed class LanClient
     /// into this machine's inbox, so nothing is at risk on either end.
     /// </summary>
     public async Task<bool> RequestSendAsync(
-        LanPeer peer, string saveId, int replyPort, string senderName, CancellationToken ct = default)
+        LanPeer peer, string saveId, int replyPort, string senderName, CancellationToken ct = default,
+        string? world = null, string? saveName = null)
     {
         if (!await EnsurePairedAsync(peer, senderName, ct).ConfigureAwait(false)) return false;
         var secret = _config.FindPeer(peer.MachineId)?.Secret;
@@ -154,6 +155,8 @@ public sealed class LanClient
                 DisplayName = _config.DisplayName,
                 SenderName = senderName,
                 SaveId = saveId,
+                World = world,
+                SaveName = saveName,
                 ReplyPort = replyPort,
             }, ct: ct).ConfigureAwait(false);
 

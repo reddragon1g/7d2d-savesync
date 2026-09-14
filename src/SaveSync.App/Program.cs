@@ -29,6 +29,40 @@ internal static class Program
 
         if (!held)
         {
+            // An OLDER copy sitting in the tray is the usual reason somebody runs a newer one, and
+            // the single-instance rule would otherwise hand them the old window and look like
+            // nothing happened. Offer the update instead of silently doing the wrong thing.
+            if (Installer.IsInstalled && Installer.InstalledIsOlder && !Installer.RunningInstalled)
+            {
+                var installed = Installer.InstalledVersion;
+                var answer = MessageBox.Show(
+                    $"This PC is running an older version ({installed}) in the background, and you have "
+                    + $"just started a newer one ({Installer.ThisVersion}).\n\n"
+                    + "Update this PC to the newer version?\n\n"
+                    + "Nothing about your saves or backups changes - only the program itself.",
+                    "Update Save Transfer",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1);
+
+                if (answer == DialogResult.Yes)
+                {
+                    try
+                    {
+                        Installer.Install();          // stops the old copy, then replaces it
+                        single.Dispose();             // the slot is free now the old one is gone
+                        Installer.LaunchInstalled();
+                        return 0;
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show(
+                            "Could not update this PC: " + ex.Message
+                            + "\n\nThe older version is still installed and still works.",
+                            "Update failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return 1;
+                    }
+                }
+            }
+
             // Already running - most likely the installed copy sitting in the tray. Bring that one
             // to the front rather than telling them to go and find it.
             try

@@ -20,6 +20,17 @@ public sealed class AppConfig
 {
     public int Schema { get; set; } = 1;
 
+    /// <summary>
+    /// Bumped when a DEFAULT changes in a way an existing settings file would otherwise override.
+    ///
+    /// Separate from Schema, which is about the file's shape. This is about its values: a setting
+    /// written by an older version is indistinguishable from one the user chose, and the only way
+    /// to tell them apart is to record which version's defaults the file was written against.
+    /// </summary>
+    public const int CurrentSettingsVersion = 2;
+
+    public int SettingsVersion { get; set; }
+
     /// <summary>Stable id for this machine. Survives a rename, which a display name does not.</summary>
     public string MachineId { get; set; } = Machine.NewMachineId();
 
@@ -102,9 +113,27 @@ public sealed class AppConfig
 
     public DateTimeOffset? FirstRunAt { get; set; }
 
+    /// <summary>
+    /// The file this config came from, and the one it writes back to.
+    ///
+    /// Not a nicety. Without it every AppConfig in the process wrote to the one real user settings
+    /// file - including the ones created by tests, which paired with loopback peers and then saved
+    /// that over the actual user's settings. A config belongs to a file; it does not belong to
+    /// whatever file happens to be the default.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? SourcePath { get; set; }
+
     public static AppConfig Load()
     {
-        var cfg = Json.ReadFile<AppConfig>(AppFolders.ConfigPath) ?? new AppConfig();
+        var path = AppFolders.ConfigPath;
+        bool existed = File.Exists(path);
+        var cfg = Json.ReadFile<AppConfig>(path) ?? new AppConfig();
+        cfg.SourcePath = path;
+
+        // A file that was never on disk is brand new and already has current defaults.
+        if (!existed) cfg.SettingsVersion = CurrentSettingsVersion;
+        else cfg.UpgradeFromOlderVersion();
 
         cfg.AdoptForThisMachine(Machine.Name);
         return cfg;
@@ -146,7 +175,31 @@ public sealed class AppConfig
     /// share - and several of those are read-only. Falling back to the per-user folder means
     /// "cannot save settings" never becomes a reason the whole thing stops working.
     /// </summary>
-    public void Save() => SaveTo(AppFolders.ConfigPath, AppFolders.LocalConfigPath);
+    /// <summary>
+    /// Brings a settings file written by an older version up to the current defaults.
+    ///
+    /// Runs once, and only touches values whose old default is now actively wrong. Anything the
+    /// user set deliberately is left exactly as it is, because there is no way to undo a surprise
+    /// like that and no reason to risk one.
+    /// </summary>
+    public void UpgradeFromOlderVersion()
+    {
+        if (SettingsVersion >= CurrentSettingsVersion) return;
+
+        // v1 shipped a count-based backup limit of 10, which made "nothing is ever deleted" false.
+        // Only the old default is cleared; a number somebody picked themselves survives.
+        if (SnapshotsToKeep == 10) SnapshotsToKeep = 0;
+
+        SettingsVersion = CurrentSettingsVersion;
+    }
+
+    public void Save()
+    {
+        // A config that knows where it came from writes there and nowhere else. One that does not
+        // is a brand new one on a real machine, which belongs in the user's settings folder.
+        if (SourcePath is { Length: > 0 } mine) { SaveTo(mine, mine); return; }
+        SaveTo(AppFolders.ConfigPath, AppFolders.LocalConfigPath);
+    }
 
     /// <summary>Split out so the fallback can be tested against a location that genuinely refuses writes.</summary>
     public void SaveTo(string preferred, string fallback)

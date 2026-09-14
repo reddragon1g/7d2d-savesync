@@ -3,6 +3,15 @@ using SaveSync.Core;
 namespace SaveSync.App;
 
 /// <summary>
+/// One offered save, flattened so the picker works for a USB stick and the network alike. Both
+/// paths ask the same question, so both get the same screen rather than two that can drift apart.
+/// </summary>
+public sealed record PickItem(string SaveName, string World, string Reason, long Bytes, bool Safe, object Source)
+{
+    public string Display => $"{SaveName} ({World})";
+}
+
+/// <summary>
 /// Which of several saves to bring over.
 ///
 /// The two big buttons deliberately hide per-save decisions, and for one save that is right. For
@@ -16,12 +25,12 @@ public sealed class PickSavesDialog : Form
     private const int PadX = 26;
     private const int Width_ = 720;
 
-    private readonly List<(SyncItem Item, SaveRow Row)> _rows = new();
+    private readonly List<(PickItem Item, SaveRow Row)> _rows = new();
     private readonly FlatButton _go = new("Bring these over", primary: true) { Width = 210, Height = 42 };
     private readonly FlatButton _cancel = new("Cancel") { Width = 120, Height = 42 };
     private readonly Label _tally = new();
 
-    public PickSavesDialog(IReadOnlyList<SyncItem> choices, Func<SyncItem, bool> isSafe)
+    public PickSavesDialog(IReadOnlyList<PickItem> choices)
     {
         Text = "Which saves?";
         FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -60,8 +69,7 @@ public sealed class PickSavesDialog : Form
 
         foreach (var choice in choices)
         {
-            bool safe = isSafe(choice);
-            var row = new SaveRow(choice, safe) { Checked = safe };
+            var row = new SaveRow(choice) { Checked = choice.Safe };
             row.SetBounds(PadX, y, inner, SaveRow.FixedHeight);
             row.Toggled += (_, _) => UpdateTally();
             Controls.Add(row);
@@ -94,7 +102,10 @@ public sealed class PickSavesDialog : Form
     }
 
     /// <summary>The saves the user ticked, in the order they were shown.</summary>
-    public List<SyncItem> Chosen => _rows.Where(r => r.Row.Checked).Select(r => r.Item).ToList();
+    public List<PickItem> Chosen => _rows.Where(r => r.Row.Checked).Select(r => r.Item).ToList();
+
+    /// <summary>The ticked saves' original objects, cast back to whatever the caller put in.</summary>
+    public List<T> ChosenAs<T>() => Chosen.Select(c => c.Source).OfType<T>().ToList();
 
     private void UpdateTally()
     {
@@ -119,8 +130,9 @@ internal sealed class SaveRow : Panel
     private bool _checked;
     private bool _hover;
 
-    public SaveRow(SyncItem item, bool safe)
+    public SaveRow(PickItem item)
     {
+        bool safe = item.Safe;
         // World as well as name, always: two saves called "My Game" in different worlds is exactly
         // the situation where a list of bare names is useless.
         _title = $"{item.SaveName}   ({item.World})";

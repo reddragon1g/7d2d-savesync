@@ -13,7 +13,7 @@
     <RootNamespace>SaveSync.App</RootNamespace>
     <Product>7 Days to Die Save Transfer</Product>
     <AssemblyTitle>7 Days to Die Save Transfer</AssemblyTitle>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
 
     <!-- Mixed DPI is the norm here: a high-DPI laptop paired with a 1080p desktop. -->
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
