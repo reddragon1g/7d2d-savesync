@@ -38,6 +38,7 @@ try
         case "peers": Peers(int.TryParse(Arg(1), out var secs) ? secs : 8); break;
         case "peerlog": PeerLog(int.TryParse(Arg(1), out var wait) ? wait : 8, Arg(2)); break;
         case "pushupdate": PushUpdate(At(1), int.TryParse(Arg(2), out var w2) ? w2 : 8, Arg(3)); break;
+        case "relay": Relay(At(1), At(2), At(3), At(4), At(5)); break;
         case "import": Import(At(1), At(2), Arg(3) ?? "apply"); break;
         default:
             Console.WriteLine($"unknown command: {cmd}");
@@ -153,6 +154,80 @@ void PushUpdate(string exePath, int seconds, string? which)
         var result = client.PushUpdateAsync(peer, exePath, "probe").GetAwaiter().GetResult();
         Console.WriteLine(result.Sent ? "SENT - " + result.Message : "refused - " + result.Message);
     }
+}
+
+/// <summary>
+/// Carries one save from one PC to another, through this one.
+///
+/// A PC can be asked to send a save, but only ever back to whoever asked - so two machines that
+/// both answer here can still be joined up by asking for it and passing it on. The receiving PC
+/// judges it with its own engine exactly as if it had arrived on a stick: nothing is applied that
+/// would not have been applied anyway, and anything needing a decision waits for a person there.
+/// </summary>
+void Relay(string userData, string fromName, string toName, string world, string saveName)
+{
+    var config = AppConfig.Load();
+    var engine = Engine(userData);
+
+    using var server = new SaveSync.Core.Lan.LanServer(config, () => engine);
+    server.Start();
+    if (!server.Running) { Console.WriteLine($"cannot listen: {server.StartFailure}"); return; }
+    Console.WriteLine($"listening on port {server.Port}");
+
+    using var discovery = new SaveSync.Core.Lan.Discovery(config)
+    {
+        PersonName = "relay",
+        ServerPort = server.Port,
+    };
+    discovery.Start();
+    Console.WriteLine("finding the two PCs...");
+    Thread.Sleep(TimeSpan.FromSeconds(8));
+
+    var from = discovery.Peers.FirstOrDefault(p => p.DisplayName.Contains(fromName, StringComparison.OrdinalIgnoreCase));
+    var to = discovery.Peers.FirstOrDefault(p => p.DisplayName.Contains(toName, StringComparison.OrdinalIgnoreCase));
+
+    if (from is null) { Console.WriteLine($"could not find {fromName}"); return; }
+    if (to is null) { Console.WriteLine($"could not find {toName}"); return; }
+
+    Console.WriteLine($"from : {from.DisplayName} at {from.Address}");
+    Console.WriteLine($"to   : {to.DisplayName} at {to.Address}");
+    Console.WriteLine($"save : {saveName} ({world})");
+    Console.WriteLine();
+
+    var before = new HashSet<string>(SaveSync.Core.Lan.Inbox.List(engine.Workspace).Select(i => i.Dir),
+        StringComparer.OrdinalIgnoreCase);
+
+    var client = new SaveSync.Core.Lan.LanClient(config);
+    Console.WriteLine("asking for it...");
+    bool asked = client.RequestSendAsync(from, "", server.Port, "relay", default, world, saveName)
+        .GetAwaiter().GetResult();
+    if (!asked) { Console.WriteLine("it would not send it."); return; }
+
+    Console.Write("waiting for it to arrive");
+    string? arrived = null;
+    var deadline = DateTime.UtcNow + TimeSpan.FromMinutes(15);
+    while (DateTime.UtcNow < deadline)
+    {
+        Thread.Sleep(2000);
+        Console.Write(".");
+        arrived = SaveSync.Core.Lan.Inbox.List(engine.Workspace)
+            .Select(i => i.Dir).FirstOrDefault(d => !before.Contains(d));
+        if (arrived is not null) break;
+    }
+    Console.WriteLine();
+
+    if (arrived is null) { Console.WriteLine("it never arrived."); return; }
+
+    var info = PackageInfo.Load(arrived);
+    Console.WriteLine($"arrived: {info?.Passport.SaveName} v{info?.Passport.Ordinal}  "
+        + $"{PathUtil.HumanBytes(info?.PayloadBytes ?? 0)}  mods={info?.Mods.Count ?? 0}");
+
+    Console.WriteLine($"passing it to {to.DisplayName}...");
+    var sent = client.SendPackageAsync(to, arrived, "relay").GetAwaiter().GetResult();
+
+    Console.WriteLine(sent.Sent
+        ? $"delivered. {to.DisplayName} says: {sent.Message}"
+        : $"not delivered: {sent.Message}");
 }
 
 void Kinship(string saveA, string saveB)

@@ -335,12 +335,23 @@ public sealed class SnapshotStore
             }
         }
 
-        // Staged payloads were never verified, so they are safe to discard.
+        // Staged payloads were never verified, so they are safe to discard. Files as well as
+        // folders: a half-received program is a file, and leaving those behind is how one stuck
+        // copy blocked every future update on a machine until somebody went and deleted it by hand.
         if (Directory.Exists(_ws.Staging))
         {
             foreach (var d in Directory.GetDirectories(_ws.Staging))
             {
                 try { PathUtil.DeleteTree(d); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+            }
+
+            foreach (var f in SafeFiles(_ws.Staging))
+            {
+                try { File.Delete(f); }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    notes.Add($"Could not clear {Path.GetFileName(f)} left over from an interrupted transfer.");
+                }
             }
         }
 
@@ -410,6 +421,12 @@ This backup is only deleted if you delete it yourself in the Backups window.
     {
         var who = info.Passport?.LastPlayedOn;
         return string.IsNullOrWhiteSpace(who) ? "unknown" : who!.Replace('\\', ' ');
+    }
+
+    private static string[] SafeFiles(string dir)
+    {
+        try { return Directory.GetFiles(dir); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return Array.Empty<string>(); }
     }
 
     private string MetaPath(string saveId, string id)
