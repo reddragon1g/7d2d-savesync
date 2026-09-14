@@ -203,8 +203,24 @@ public static class GameTuning
     /// </summary>
     public static readonly Setting[] SteadyProfile =
     {
-        new("OptionsGfxUpscalerMode", "4", "render below native and upscale"),
-        new("OptionsGfxDynamicScale", "0.5", "half scale - the one measured holding 30 fps at 21% busy"),
+        // The same pixels, reconstructed properly instead of stretched.
+        //
+        // Mode 4 is a plain resolution scale: render small, blow it up, and it looks exactly as
+        // bad as that sounds - "the game looks like shit" was the verdict, and it was fair. Mode 5
+        // is DLSS, which renders the same number of pixels and reconstructs the frame from motion
+        // vectors and history. The cost is in the internal resolution, and the internal resolution
+        // is set by the preset, not by DynamicScale: preset 1 is Performance, which is a half-scale
+        // render per axis - the identical pixel count that measured 30 fps at 38% busy and 79C.
+        //
+        // Better still, this was nearly this PC's own setting already. It was on FSR3 at Balanced
+        // before any of this; replacing a real temporal upscaler with a linear stretch was a
+        // downgrade nobody asked for.
+        //
+        // Safe to ask for: GameRenderManager falls straight back to mode 4 if DLSS or FSR3 turn
+        // out to be unsupported, which is why DynamicScale stays set to the value that works.
+        new("OptionsGfxUpscalerMode", "5", "DLSS - the RTX 2060 has the hardware for it"),
+        new("OptionsGfxFSRPreset", "1", "Performance: a half-scale render, reconstructed rather than stretched"),
+        new("OptionsGfxDynamicScale", "0.5", "only used if DLSS is unsupported - the known-good fallback"),
         new("OptionsGfxVsync", "2", "lock to 30 fps, tear-free, for half the work of 60"),
         new("OptionsGfxLimitFpsInGame", "30", "and a frame cap as well, for if vsync is ever turned off"),
 
