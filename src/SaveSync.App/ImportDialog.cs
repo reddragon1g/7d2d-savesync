@@ -275,11 +275,20 @@ public sealed class ImportDialog : Form
         var incoming = _plan.Info.Passport;
         var local = _plan.Local;
 
+        // The day count first, because it is the one thing that tells two identically named saves
+        // apart at a glance - a 60-day world and a 32-day world are not a close call once you can
+        // see which is which.
+        var incomingEvidence = ReadEvidence(PackageLayout.Payload(_plan.PackageDir));
+        var localEvidence = local is null ? null : ReadEvidence(local.Folder);
+
         var left = new SidePanel(
             $"FROM {Friendly(_plan.Info.CreatedBy).ToUpperInvariant()}",
-            $"Version {incoming.Ordinal}",
+            incomingEvidence?.Readable == true
+                ? $"Day {incomingEvidence.Day}  -  version {incoming.Ordinal}"
+                : $"Version {incoming.Ordinal}",
             $"Played {Theme.Ago(incoming.LastPlayedAt)}",
-            PathUtil.HumanBytes(_plan.Info.PayloadBytes),
+            PathUtil.HumanBytes(_plan.Info.PayloadBytes)
+                + (incomingEvidence?.PlayerIds.Count > 0 ? $"  -  {incomingEvidence.PlayerIds.Count} players" : ""),
             highlight: Lineage.IsSafeToApply(_plan.Relation));
         left.SetBounds(PadX, y, w, SidePanel.FixedHeight);
 
@@ -287,9 +296,13 @@ public sealed class ImportDialog : Form
             ? new SidePanel("ON THIS PC",
                 "Nothing here yet", "This save is not on this PC", "", highlight: false)
             : new SidePanel("ON THIS PC",
-                local.Passport is null ? "Not set up" : $"Version {local.Passport.Ordinal}",
+                localEvidence?.Readable == true
+                    ? $"Day {localEvidence.Day}"
+                      + (local.Passport is null ? "  -  never copied" : $"  -  version {local.Passport.Ordinal}")
+                    : local.Passport is null ? "Not set up" : $"Version {local.Passport.Ordinal}",
                 $"Played {Theme.Ago(local.LastWriteUtc)}",
-                PathUtil.HumanBytes(local.SizeBytes),
+                PathUtil.HumanBytes(local.SizeBytes)
+                    + (localEvidence?.PlayerIds.Count > 0 ? $"  -  {localEvidence.PlayerIds.Count} players" : ""),
                 highlight: _plan.Relation == Relation.Stale);
         right.SetBounds(PadX + w + gap, y, w, SidePanel.FixedHeight);
 
@@ -367,6 +380,12 @@ public sealed class ImportDialog : Form
         Relation.Stale => "Yes, go back to the older one",
         _ => "Yes, replace it",
     };
+
+    private static SaveEvidence? ReadEvidence(string folder)
+    {
+        try { return SaveEvidence.Read(folder); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+    }
 
     private int AddBanner(int y, Severity level, string? headline, string body,
         Color? accent = null, Color? soft = null)

@@ -995,6 +995,42 @@ public sealed class MainForm : Form
         return line;
     }
 
+    /// <summary>
+    /// What the save actually is, not just what it is called.
+    ///
+    /// The game names everyone's first world the same thing, so a list of names is not enough to
+    /// pick from - and getting it wrong means carrying the wrong world across. Seen for real:
+    /// three saves offered, the one that mattered was called "My Game" and the one that got taken
+    /// was called "Chris world", and nothing on screen distinguished a 60-day world played this
+    /// evening from a 32-day one last touched a week ago.
+    /// </summary>
+    private static string DescribeSave(SyncItem item)
+    {
+        var parts = new List<string>();
+
+        if (item.PackageDir is not null)
+        {
+            try
+            {
+                var ev = SaveEvidence.Read(PackageLayout.Payload(item.PackageDir));
+                if (ev.Readable)
+                {
+                    parts.Add($"day {ev.Day}");
+                    if (ev.PlayerIds.Count > 0)
+                        parts.Add($"{ev.PlayerIds.Count} player{(ev.PlayerIds.Count == 1 ? "" : "s")}");
+                }
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
+
+        var played = item.Package?.Passport.LastPlayedAt ?? item.Local?.LastWriteUtc;
+        if (played is { } when_ && when_ > DateTimeOffset.MinValue)
+            parts.Add("last played " + Theme.Ago(when_));
+
+        parts.Add(item.Reason);
+        return string.Join(Theme.Dot, parts);
+    }
+
     private static string Describe(IEnumerable<SyncItem> items)
     {
         var list = items.ToList();
@@ -1321,7 +1357,7 @@ public sealed class MainForm : Form
         {
             using var picker = new PickSavesDialog(offered
                 .Select(i => new PickItem(
-                    i.SaveName, i.World, i.Reason, i.Bytes, i.Direction == SyncDirection.ToPc, i))
+                    i.SaveName, i.World, DescribeSave(i), i.Bytes, i.Direction == SyncDirection.ToPc, i))
                 .ToList());
 
             if (picker.ShowDialog(this) != DialogResult.OK) return;
