@@ -25,6 +25,16 @@ public sealed class MachineReport
 
     public bool GameRunning { get; init; }
 
+    /// <summary>How hard the memory system is working. Above ~90% something is being squeezed.</summary>
+    public int MemoryLoadPercent { get; init; }
+
+    /// <summary>Commit charge against the limit. Near the limit means Windows is paging to keep up.</summary>
+    public long CommittedBytes { get; init; }
+    public long CommitLimitBytes { get; init; }
+
+    /// <summary>The biggest memory users on that PC, so "what is eating it" has an answer.</summary>
+    public List<ProcessUse> TopProcesses { get; init; } = new();
+
     /// <summary>The most recent performance line the game wrote, if it has written one.</summary>
     public GameStats? Game { get; init; }
 
@@ -42,6 +52,10 @@ public sealed class MachineReport
             FreeMemoryBytes = Memory().Free,
             SavesDriveFreeBytes = location is null ? -1 : FileOps.FreeSpace(location.SavesDir),
             GameRunning = GamePaths.IsGameRunning(),
+            MemoryLoadPercent = Memory().LoadPercent,
+            CommittedBytes = Memory().Committed,
+            CommitLimitBytes = Memory().CommitLimit,
+            TopProcesses = ProcessUse.Biggest(10),
             Game = location is null ? null : GameStats.ReadLatest(location),
         };
     }
@@ -59,8 +73,26 @@ public sealed class MachineReport
         if (SavesDriveFreeBytes >= 0)
             lines.Add($"Free space where the saves live: {PathUtil.HumanBytes(SavesDriveFreeBytes)}");
 
+        if (CommitLimitBytes > 0)
+        {
+            var pressure = MemoryLoadPercent >= 90 ? "  <- under real pressure"
+                : MemoryLoadPercent >= 80 ? "  <- getting tight" : "";
+            lines.Add($"Memory in use: {MemoryLoadPercent}%{pressure}");
+            lines.Add($"Committed: {PathUtil.HumanBytes(CommittedBytes)} of "
+                + $"{PathUtil.HumanBytes(CommitLimitBytes)} - anything near the limit means Windows "
+                + "is paging to disk, which on an old machine is most of what 'running badly' is.");
+        }
+
         lines.Add(GameRunning ? "The game is running right now." : "The game is not running.");
         if (Game is not null) lines.Add(Game.Describe());
+
+        if (TopProcesses.Count > 0)
+        {
+            lines.Add("");
+            lines.Add("Biggest memory users:");
+            foreach (var proc in TopProcesses)
+                lines.Add("  " + proc.Describe());
+        }
 
         return string.Join(Environment.NewLine, lines);
     }
@@ -118,17 +150,21 @@ public sealed class MachineReport
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GlobalMemoryStatusEx(ref MemoryStatusEx buffer);
 
-    private static (long Total, long Free) Memory()
+    private static (long Total, long Free, int LoadPercent, long Committed, long CommitLimit) Memory()
     {
         try
         {
             var status = new MemoryStatusEx { Length = (uint)Marshal.SizeOf<MemoryStatusEx>() };
             if (GlobalMemoryStatusEx(ref status))
-                return ((long)status.TotalPhys, (long)status.AvailPhys);
+            {
+                long limit = (long)status.TotalPageFile;
+                long committed = limit - (long)status.AvailPageFile;
+                return ((long)status.TotalPhys, (long)status.AvailPhys, (int)status.MemoryLoad, committed, limit);
+            }
         }
         catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException) { }
 
-        return (-1, -1);
+        return (-1, -1, 0, 0, 0);
     }
 }
 
@@ -233,5 +269,69 @@ public sealed class GameStats
             PlayedFor = played.Success ? played.Groups[1].Value : "",
             At = at,
         };
+    }
+}
+
+
+/// <summary>One process and what it is costing, for answering "what is eating this machine".</summary>
+public sealed class ProcessUse
+{
+    public required string Name { get; init; }
+    public int Id { get; init; }
+    public long WorkingSetBytes { get; init; }
+
+    /// <summary>True for things Windows itself needs. Never offered as something to close.</summary>
+    public bool Essential { get; init; }
+
+    public string Describe()
+        => $"{Name,-28} {PathUtil.HumanBytes(WorkingSetBytes),-10}"
+           + (Essential ? " (part of Windows)" : "");
+
+    /// <summary>
+    /// Things that must never be suggested as closable, whatever they are using.
+    ///
+    /// A list of what NOT to touch is the only safe way round this: anything not recognised is
+    /// still somebody's program, so the answer to "can we free memory" is a suggestion for a
+    /// person to weigh, never an action taken on their behalf.
+    /// </summary>
+    private static readonly HashSet<string> Windows = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "System", "Idle", "Registry", "Memory Compression", "smss", "csrss", "wininit", "winlogon",
+        "services", "lsass", "svchost", "fontdrvhost", "dwm", "explorer", "ctfmon", "sihost",
+        "taskhostw", "RuntimeBroker", "ShellExperienceHost", "StartMenuExperienceHost",
+        "SearchHost", "dllhost", "conhost", "audiodg", "spoolsv", "WmiPrvSE", "MsMpEng",
+        "SecurityHealthService", "NisSrv", "LsaIso", "WUDFHost", "SystemSettings",
+    };
+
+    public static List<ProcessUse> Biggest(int count)
+    {
+        try
+        {
+            return System.Diagnostics.Process.GetProcesses()
+                .Select(p =>
+                {
+                    try { return new ProcessUse
+                    {
+                        Name = p.ProcessName,
+                        Id = p.Id,
+                        WorkingSetBytes = p.WorkingSet64,
+                        Essential = Windows.Contains(p.ProcessName),
+                    }; }
+                    catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception)
+                    {
+                        return null;
+                    }
+                    finally { p.Dispose(); }
+                })
+                .Where(p => p is not null)
+                .Select(p => p!)
+                .OrderByDescending(p => p.WorkingSetBytes)
+                .Take(count)
+                .ToList();
+        }
+        catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return new List<ProcessUse>();
+        }
     }
 }
