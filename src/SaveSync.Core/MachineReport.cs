@@ -104,6 +104,16 @@ public sealed class MachineReport
     /// <summary>Which chip Windows has been told to give the game, when it has been told anything.</summary>
     public string GpuPreference { get; init; } = "";
 
+    /// <summary>
+    /// Mods on this PC that did not come with the game.
+    ///
+    /// Worth reporting beside the performance numbers because a mod is code running inside the
+    /// game's own loop. Everything measured from outside - frame rate, temperature, processor -
+    /// looks identical whether that code is well behaved or throwing an exception every frame, and
+    /// the second one feels like the machine is broken.
+    /// </summary>
+    public List<string> Mods { get; init; } = new();
+
     public static MachineReport Read(GameLocation? location)
     {
         // One measured window, taken before anything else, so every load figure below describes
@@ -141,6 +151,7 @@ public sealed class MachineReport
             OnBattery = SystemLoad.OnBattery(),
             PowerPlan = SystemLoad.ActivePowerPlan(),
             GpuPreference = DescribeGpuPreference(location),
+            Mods = ListMods(location),
         };
     }
 
@@ -229,6 +240,12 @@ public sealed class MachineReport
             lines.Add("Busiest right now (processor):");
             foreach (var proc in Busiest) lines.Add("  " + proc.Describe());
         }
+
+        lines.Add("");
+        lines.Add(Mods.Count == 0
+            ? "Mods: none beyond what came with the game."
+            : $"Mods ({Mods.Count}) - these are code running inside the game's own loop:");
+        foreach (var mod in Mods) lines.Add("  " + mod);
 
         if (TopProcesses.Count > 0)
         {
@@ -329,6 +346,24 @@ public sealed class MachineReport
             return "EAC is ON in practice, whatever the settings file says.";
 
         return null;
+    }
+
+    /// <summary>Mods that came with a person rather than with the game, as readable lines.</summary>
+    private static List<string> ListMods(GameLocation? location)
+    {
+        if (location is null) return new List<string>();
+
+        try
+        {
+            return SaveSync.Core.Mods.Travelling(location)
+                .Select(m => $"{m.Describe()}  ({m.FileCount} files, {PathUtil.HumanBytes(m.SizeBytes)}"
+                             + (string.IsNullOrWhiteSpace(m.Author) ? "" : $", by {m.Author}") + ")")
+                .ToList();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return new List<string>();
+        }
     }
 
     /// <summary>Which chip Windows has been told to hand the game, if it has been told at all.</summary>

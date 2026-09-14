@@ -314,6 +314,24 @@ public sealed class LanClient
         return (response.Ok, response.Ok ? response.Message ?? "Done." : response.Error ?? "Refused.");
     }
 
+    /// <summary>Fetches the GAME's own log from another PC, not this program's.</summary>
+    public async Task<PeerReport?> GetGameLogAsync(
+        LanPeer peer, string senderName, CancellationToken ct = default, string? find = null)
+    {
+        var response = await SimpleAsync(peer, "get-game-log", senderName, null, null, ct,
+                                         saveName: find)
+            .ConfigureAwait(false);
+
+        if (response is null || !response.Ok) return null;
+
+        return new PeerReport
+        {
+            Label = response.LogLabel ?? peer.Label,
+            Text = response.LogText ?? "",
+            ToolVersion = response.ToolVersion ?? "",
+        };
+    }
+
     /// <summary>Points another PC's game at one graphics chip or the other.</summary>
     public async Task<(bool Ok, string Message)> GpuChoiceAsync(
         LanPeer peer, string which, string senderName, CancellationToken ct = default)

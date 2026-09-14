@@ -139,7 +139,7 @@ public sealed class LanServer : IDisposable
                         or "get-log" or "update-offer" or "update-file"
                         or "inbox-list" or "inbox-keep-both" or "restart" or "rename-save"
                         or "get-machine" or "game-stop" or "game-start" or "spawn-pref-reset"
-                        or "gpu-choice") return;
+                        or "gpu-choice" or "get-game-log") return;
                 }
             }
             catch (OperationCanceledException) { }
@@ -179,6 +179,7 @@ public sealed class LanServer : IDisposable
             "game-start" => GameStart(request),
             "spawn-pref-reset" => SpawnPrefReset(request),
             "gpu-choice" => GpuChoiceOp(request),
+            "get-game-log" => GetGameLog(request),
             "inbox-list" => InboxList(),
             "inbox-keep-both" => InboxKeepBoth(request),
             "restart" => Restart(request),
@@ -416,6 +417,47 @@ public sealed class LanServer : IDisposable
 
         ActivityLog.Write($"asked by {request.DisplayName} to use {GpuChoice.Describe(choice)}: {message}");
         return ok ? new LanResponse { Ok = true, Message = message } : LanResponse.Fail(message);
+    }
+
+    /// <summary>
+    /// Hands over the GAME's log, as opposed to this program's.
+    ///
+    /// Read-only, and the difference matters: everything else here measures the game from outside
+    /// and only ever sees the render thread. A game that stutters while reporting a steady frame
+    /// rate is complaining about something else entirely, and this is where it says so.
+    /// </summary>
+    private LanResponse GetGameLog(LanRequest request)
+    {
+        var location = _engineProvider()?.Location;
+        if (location is null) return LanResponse.Fail("This PC has not found the game's folders.");
+
+        // A phrase turns this from a summary into a search, which is what is wanted once the
+        // summary has said WHICH complaint matters and the question becomes where it comes from.
+        if (!string.IsNullOrWhiteSpace(request.SaveName))
+        {
+            return new LanResponse
+            {
+                Ok = true,
+                MachineId = _config.MachineId,
+                DisplayName = _config.DisplayName,
+                ToolVersion = TransferEngine.ToolVersion,
+                LogLabel = "search: " + request.SaveName,
+                LogText = GameLog.Find(location, request.SaveName!),
+            };
+        }
+
+        var report = GameLog.ReadLatest(location);
+        if (report is null) return LanResponse.Fail("There is no game log on this PC yet.");
+
+        return new LanResponse
+        {
+            Ok = true,
+            MachineId = _config.MachineId,
+            DisplayName = _config.DisplayName,
+            ToolVersion = TransferEngine.ToolVersion,
+            LogLabel = report.FileName,
+            LogText = report.Describe(),
+        };
     }
 
     /// <summary>What this PC is, and how the game is behaving on it right now.</summary>
