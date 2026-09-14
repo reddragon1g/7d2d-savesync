@@ -21,7 +21,7 @@ Windows will say "Windows protected your PC" the first time, because the program
 ## Build
 
 ```
-dotnet test src/SaveSync.Core.Tests/SaveSync.Core.Tests.csproj      # 136 tests
+dotnet test src/SaveSync.Core.Tests/SaveSync.Core.Tests.csproj      # 210 tests
 dotnet publish src/SaveSync.App/SaveSync.App.csproj -c Release -o dist
 ```
 
@@ -113,6 +113,50 @@ transfer is a package with a manifest; nothing about the safety model changes.
 `PeerWatcher` polls the other PC every 15s, compares passports, and raises the "they have a newer
 copy" news that drives the tray notification. `request-send` asks the far side to package and push;
 it only reads over there.
+
+## Driving the other PC
+
+The point of all of the above is to stop anybody having to walk over to a machine. These do the
+rest of it, and none of them needs a person at the far end to click anything:
+
+| Ask | What happens there |
+|---|---|
+| `get-machine` | CPU, every GPU, memory, commit charge, biggest processes, the game's own frame-rate samples, which save is loaded, and how that PC starts the game |
+| `get-log` | That PC's account of what it has been doing |
+| `rename-save` | Renames one save. Nothing copied, nothing deleted |
+| `restart` | Hands over to the installed copy, so a pushed update takes effect |
+| `update-offer` / `update-file` | A newer program, checked against a checksum declared before a byte is sent |
+| `game-stop` | Asks the game to close. Asked, never killed - it writes the world on the way out |
+| `game-start` | Starts the game, optionally **straight into a named save** |
+
+### Starting a named save from another PC
+
+The game supports this itself; it is how it restarts back into your world after a setting change.
+Three arguments, read out of the game's own code rather than guessed at:
+
+```
+-world=<World> -name=<Save> -LoadSaveGame=true
+```
+
+`-LoadSaveGame` is a **bool**, not the name of the save - `LaunchPrefs` parses it with
+`bool.TryParse`, and putting the name there yields `Could not parse config value` and a game
+sitting at its menu. The bool switches on `Platform.PlatformApplicationManager.LoadSaveGame`, a
+state machine that finds that world and save among the ones on the PC and works the menu itself:
+`ContinueGameOpen -> ContinueGameSelect -> ContinueGamePlay -> Done`. It narrates that to the log,
+so the result is readable afterwards from another machine.
+
+Two things follow from how the game behaves, and both are in `GameLauncher`:
+
+- **A name that matches nothing is not an error to the game.** It makes a brand new world under
+  that name - `[LoadSaveGame] Creating new save game`. A typo would leave somebody's PC sitting in
+  an empty world that looks exactly like a wiped save, so a save that is not there is refused
+  before anything starts.
+- **The arguments need the game's executable, not `steam://`,** which carries no arguments. That
+  means taking over a job the game's own launcher does: turning `launchersettings.json` into flags.
+  Getting it wrong would change how somebody's game runs - it could switch EasyAntiCheat back on
+  for a person who turned it off. So no launch is invented: the one that machine last used is
+  repeated, read out of `logs/launcher.log`, and only a PC that has never started the game falls
+  back to deriving one from the settings file.
 
 ## Running from anywhere
 
@@ -213,7 +257,9 @@ Each has a dedicated test in `src/SaveSync.Core.Tests`.
 src/SaveSync.Core/        engine: passports, ancestry, manifests, snapshots, planning
 src/SaveSync.Core/Mods.cs discovery, comparison and install of mod folders
 src/SaveSync.Core/Lan/    network: framing, server, client, discovery, peer comparison
-src/SaveSync.Core.Tests/  136 tests: synthetic saves and mods, plus real TCP transfers on loopback
+src/SaveSync.Core/GameLauncher.cs  starting the game, and a named save, from another PC
+src/SaveSync.Watchdog/    tiny keep-alive process, reachable when the main one is not
+src/SaveSync.Core.Tests/  210 tests: synthetic saves and mods, plus real TCP transfers on loopback
 src/SaveSync.App/         WinForms UI (dark, 7DTD-styled), single screen, two buttons
 tools/SaveSync.Probe/     dev CLI to drive the engine headlessly
 docs/quick-start.html     printable instructions for the end users

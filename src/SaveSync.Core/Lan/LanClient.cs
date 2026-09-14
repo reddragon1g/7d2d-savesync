@@ -284,11 +284,19 @@ public sealed class LanClient
         return (response.Ok, response.Ok ? response.Message ?? "Restarting." : response.Error ?? "Refused.");
     }
 
-    /// <summary>Asks another PC to close or start the game.</summary>
+    /// <summary>
+    /// Asks another PC to close the game, or to start it - optionally straight into a named save.
+    ///
+    /// The save is named by world and name rather than by SaveId on purpose: the other machine
+    /// matches it against its own folders, so a name that is not there is refused there rather
+    /// than guessed at here.
+    /// </summary>
     public async Task<(bool Ok, string Message)> GameAsync(
-        LanPeer peer, bool start, string senderName, CancellationToken ct = default)
+        LanPeer peer, bool start, string senderName, CancellationToken ct = default,
+        string? world = null, string? saveName = null)
     {
-        var response = await SimpleAsync(peer, start ? "game-start" : "game-stop", senderName, null, null, ct)
+        var response = await SimpleAsync(peer, start ? "game-start" : "game-stop", senderName, null, null, ct,
+                                         world, saveName)
             .ConfigureAwait(false);
 
         if (response is null) return (false, $"{peer.Label} did not answer.");
@@ -329,7 +337,8 @@ public sealed class LanClient
 
     /// <summary>One request, one answer, no body. Shared by the small operations.</summary>
     private async Task<LanResponse?> SimpleAsync(
-        LanPeer peer, string op, string senderName, string? inboxId, string? installAs, CancellationToken ct)
+        LanPeer peer, string op, string senderName, string? inboxId, string? installAs, CancellationToken ct,
+        string? world = null, string? saveName = null)
     {
         if (!await EnsurePairedAsync(peer, senderName, ct).ConfigureAwait(false)) return null;
         var secret = _config.FindPeer(peer.MachineId)?.Secret;
@@ -349,6 +358,8 @@ public sealed class LanClient
                 SenderName = senderName,
                 InboxId = inboxId,
                 InstallAsName = installAs,
+                World = world,
+                SaveName = saveName,
             }, ct: ct).ConfigureAwait(false);
 
             return await LanProtocol.ReadHeaderAsync<LanResponse>(stream, ct).ConfigureAwait(false);

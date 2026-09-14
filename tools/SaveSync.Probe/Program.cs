@@ -10,6 +10,8 @@ using SaveSync.Core;
 //   probe play     <userdata> <world> <saveName>     - simulate a play session
 //   probe inspect  <userdata> <packageDir>
 //   probe import   <userdata> <packageDir> [apply|take|keep]
+//   probe launch   [world] [saveName]               - start the game HERE, in that save
+//   probe launchplan [world] [saveName]             - print what a launch would run, start nothing
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 
@@ -43,10 +45,12 @@ try
         case "restart": RestartPeer(int.TryParse(Arg(1), out var rw) ? rw : 8, Arg(2)); break;
         case "peersaves": PeerSaves(int.TryParse(Arg(1), out var sw) ? sw : 8, Arg(2)); break;
         case "machine": PeerMachine(int.TryParse(Arg(1), out var mw) ? mw : 8, Arg(2)); break;
-        case "game": Game_(At(1), Arg(2)); break;
+        case "game": Game_(At(1), Arg(2), Arg(3), Arg(4)); break;
         case "rename": RenamePeerSave(At(1), At(2), At(3), At(4)); break;
         case "keepboth": KeepBoth(int.TryParse(Arg(1), out var kw) ? kw : 8, At(2), At(3), Arg(4)); break;
         case "import": Import(At(1), At(2), Arg(3) ?? "apply"); break;
+        case "launch": Launch(Arg(1), Arg(2), dryRun: false); break;
+        case "launchplan": Launch(Arg(1), Arg(2), dryRun: true); break;
         default:
             Console.WriteLine($"unknown command: {cmd}");
             return 2;
@@ -259,8 +263,15 @@ void Relay(string userData, string fromName, string toName, string world, string
         : $"not delivered: {sent.Message}");
 }
 
-/// <summary>Starts or closes the game on another PC.</summary>
-void Game_(string startOrStop, string? which)
+/// <summary>
+/// Starts or closes the game on another PC.
+///
+///   game stop  [who]
+///   game start [who] [world] [save name]
+///
+/// With a world and a save it goes straight in; without them it comes up at the menu.
+/// </summary>
+void Game_(string startOrStop, string? which, string? world, string? saveName)
 {
     bool start = startOrStop.Equals("start", StringComparison.OrdinalIgnoreCase);
     var config = AppConfig.Load();
@@ -277,7 +288,7 @@ void Game_(string startOrStop, string? which)
     var client = new SaveSync.Core.Lan.LanClient(config);
     foreach (var peer in peers)
     {
-        var r = client.GameAsync(peer, start, "probe").GetAwaiter().GetResult();
+        var r = client.GameAsync(peer, start, "probe", default, world, saveName).GetAwaiter().GetResult();
         Console.WriteLine($"  {peer.DisplayName,-18} {(r.Ok ? "OK" : "refused")} - {r.Message}");
     }
 }
@@ -450,6 +461,47 @@ void Kinship(string saveA, string saveB)
     Console.WriteLine($"VERDICT: {v.Kind}");
     Console.WriteLine($"  {v.Headline}");
     foreach (var r in v.Reasons) Console.WriteLine($"    - {r}");
+}
+
+/// <summary>
+/// Starts the game on THIS machine, optionally straight into a named save.
+///
+/// The local half of the remote "game start" op, and the only way to watch the whole thing happen
+/// with the log in front of you. launchplan does everything except start it.
+/// </summary>
+void Launch(string? world, string? saveName, bool dryRun)
+{
+    var loc = GamePaths.Discover();
+    if (loc is null) { Console.WriteLine("the game's folders were not found on this PC."); return; }
+
+    var install = GamePaths.ResolveInstall(loc.InstallDir);
+    if (install is null) { Console.WriteLine("the game does not appear to be installed on this PC."); return; }
+
+    var settings = GameLauncher.ReadSettings(loc);
+    Console.WriteLine($"settings  : {settings.Describe()}   <- {settings.Provenance}");
+
+    var last = GameLauncher.LastLauncherInvocation(loc);
+    Console.WriteLine(last is null
+        ? "last launch: (none recorded - the launch will be built from the settings file)"
+        : $"last launch: {last.Value.Exe} {string.Join(" ", last.Value.Args)}");
+
+    if (saveName is not null)
+    {
+        var problem = GameLauncher.WhyCannotLoad(loc, world, saveName);
+        Console.WriteLine($"save      : {problem ?? $"'{saveName}' in '{world}' is there and loadable"}");
+    }
+
+    var plan = GameLauncher.PlanLaunch(loc, install, world, saveName);
+    Console.WriteLine();
+    Console.WriteLine($"basis     : {plan.Basis}");
+    Console.WriteLine($"would run : {plan.CommandLine}");
+    Console.WriteLine($"log       : {plan.LogFile}");
+
+    if (dryRun) { Console.WriteLine(); Console.WriteLine("(dry run - nothing was started)"); return; }
+
+    Console.WriteLine();
+    var result = GameLauncher.Start(loc, world, saveName, "probe");
+    Console.WriteLine(result.Ok ? "STARTED: " + result.Message : "REFUSED: " + result.Message);
 }
 
 void Discover()

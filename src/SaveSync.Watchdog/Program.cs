@@ -341,20 +341,17 @@ static async Task<LanResponse> HandleAsync(LanRequest request, Stream stream, Ca
 
         case "watch-game-start":
         {
-            try
-            {
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = "steam://rungameid/" + SteamLocator.SevenDaysAppId,
-                    UseShellExecute = true,
-                });
-                Log($"asked by {request.DisplayName} to start the game");
-                return new LanResponse { Ok = true, Message = "Asked Steam to start the game." };
-            }
-            catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
-            {
-                return LanResponse.Fail("Could not start it: " + e.Message);
-            }
+            // Same launcher the main program uses, so a machine whose main program is wedged can
+            // still be put into the right save rather than merely switched on.
+            var result = GameLauncher.Start(config.Locate(), request.World, request.SaveName, request.DisplayName);
+
+            Log(result.Ok
+                ? $"asked by {request.DisplayName} to start the game: {result.CommandLine}"
+                : $"asked by {request.DisplayName} to start the game, refused: {result.Message}");
+
+            return result.Ok
+                ? new LanResponse { Ok = true, Message = result.Message }
+                : LanResponse.Fail(result.Message);
         }
 
         default:

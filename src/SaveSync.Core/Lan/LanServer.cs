@@ -354,32 +354,22 @@ public sealed class LanServer : IDisposable
         return new LanResponse { Ok = true, Message = "Asked the game to close; it saves on the way out." };
     }
 
-    /// <summary>Starts the game through Steam.</summary>
+    /// <summary>
+    /// Starts the game, and puts it straight into a named save when one is asked for.
+    ///
+    /// This used to hand the job to Steam and explain that choosing the save was impossible. It is
+    /// not - see GameLauncher, which starts the game's own executable with the -LoadSaveGame=
+    /// argument the game has always understood, repeating whatever launch settings this PC
+    /// already uses so that nobody's EasyAntiCheat choice is changed behind their back.
+    /// </summary>
     private LanResponse GameStart(LanRequest request)
     {
-        try
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "steam://rungameid/" + SteamLocator.SevenDaysAppId,
-                UseShellExecute = true,
-            });
+        var location = _engineProvider()?.Location;
+        var result = GameLauncher.Start(location, request.World, request.SaveName, request.DisplayName);
 
-            ActivityLog.Write($"asked by {request.DisplayName} to start the game");
-
-            // Honest about the limit: Steam can be told to start the game, and nothing can be told
-            // which world to load - the game comes up at its own menu and a person picks from there.
-            return new LanResponse
-            {
-                Ok = true,
-                Message = "Asked Steam to start it. It will come up at its own menu; nothing can "
-                          + "choose the save for it.",
-            };
-        }
-        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
-        {
-            return LanResponse.Fail("Could not start it: " + e.Message);
-        }
+        return result.Ok
+            ? new LanResponse { Ok = true, Message = result.Message }
+            : LanResponse.Fail(result.Message);
     }
 
     /// <summary>What this PC is, and how the game is behaving on it right now.</summary>

@@ -38,6 +38,18 @@ public sealed class MachineReport
     /// <summary>The most recent performance line the game wrote, if it has written one.</summary>
     public GameStats? Game { get; init; }
 
+    /// <summary>
+    /// How this PC is set up to start the game: EasyAntiCheat, renderer, any extra parameters.
+    ///
+    /// Worth seeing from another machine because it is both a thing people deliberately change and
+    /// a thing that explains behaviour - EAC is off on these two PCs by choice, and anything that
+    /// started the game would have to keep it that way.
+    /// </summary>
+    public string LaunchSetup { get; init; } = "";
+
+    /// <summary>Which save the game is in, read out of its own log. Empty when it has loaded none.</summary>
+    public string LoadedSave { get; init; } = "";
+
     public static MachineReport Read(GameLocation? location)
     {
         return new MachineReport
@@ -57,6 +69,8 @@ public sealed class MachineReport
             CommitLimitBytes = Memory().CommitLimit,
             TopProcesses = ProcessUse.Biggest(10),
             Game = location is null ? null : GameStats.ReadLatest(location),
+            LaunchSetup = location is null ? "" : GameLauncher.ReadSettings(location).Describe(),
+            LoadedSave = location is null ? "" : GameLauncher.ReadLoadedSave(location)?.Describe() ?? "",
         };
     }
 
@@ -84,6 +98,8 @@ public sealed class MachineReport
         }
 
         lines.Add(GameRunning ? "The game is running right now." : "The game is not running.");
+        if (LoadedSave.Length > 0) lines.Add("Save: " + LoadedSave);
+        if (LaunchSetup.Length > 0) lines.Add("Starts with: " + LaunchSetup);
         if (Game is not null) lines.Add(Game.Describe());
 
         if (TopProcesses.Count > 0)
