@@ -226,6 +226,17 @@ public sealed class PeerSave
     /// <summary>That PC has played since it last packaged this save, so its passport understates it.</summary>
     public bool PlayedSinceLastCopy { get; set; }
 
+    /// <summary>
+    /// What the save actually is, read from the game's own files: how far it has got, and who has
+    /// played there. A list of names says nothing when several of them are the game's default.
+    /// </summary>
+    public int Day { get; set; }
+
+    public int Players { get; set; }
+
+    /// <summary>The people who have played here, for telling one world from another.</summary>
+    public List<string> PlayerNames { get; set; } = new();
+
     public string Display => $"{SaveName} ({World})";
 }
 

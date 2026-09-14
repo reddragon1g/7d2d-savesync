@@ -23,8 +23,19 @@ internal static class Program
         // program, and the replacement would otherwise race the copy that is still shutting down
         // and be told it is already running.
         using var single = new Mutex(false, "SaveSync.7DaysToDie.SingleInstance");
+
+        // A copy started BY an update handover waits far longer for the slot than one started by a
+        // person double-clicking.
+        //
+        // The old copy launches the new one and only then begins shutting down, so for a moment
+        // both exist and the slot is still held. Five seconds is plenty for somebody's second
+        // double-click and nowhere near enough for a shutdown that has a log to flush to a USB
+        // stick - and losing that race leaves the machine with NOTHING running, on a PC nobody is
+        // sitting at, which is the one outcome worth engineering against.
+        var slotWait = Has("--handover") ? TimeSpan.FromSeconds(90) : TimeSpan.FromSeconds(5);
+
         bool held;
-        try { held = single.WaitOne(TimeSpan.FromSeconds(5)); }
+        try { held = single.WaitOne(slotWait); }
         catch (AbandonedMutexException) { held = true; } // the previous copy died; the slot is ours
 
         if (!held)
@@ -61,6 +72,23 @@ internal static class Program
                         return 1;
                     }
                 }
+            }
+
+            // A handover that could not get the slot must not go quietly: the machine is about to
+            // have nothing running at all, and saying so somewhere is the only way anybody finds
+            // out before trying to reach it.
+            if (Has("--handover"))
+            {
+                try
+                {
+                    var where = Path.Combine(Path.GetTempPath(), "savesync-handover-failed.txt");
+                    File.WriteAllText(where,
+                        $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss}  a handover to "
+                        + $"{Installer.ThisVersion} could not take the single-instance slot after "
+                        + $"{slotWait.TotalSeconds:0}s. The previous copy may still be shutting down."
+                        + Environment.NewLine);
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
             }
 
             // Already running - most likely the installed copy sitting in the tray. Bring that one

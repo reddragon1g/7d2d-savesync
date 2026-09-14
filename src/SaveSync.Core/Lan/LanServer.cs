@@ -295,6 +295,37 @@ public sealed class LanServer : IDisposable
     /// <summary>Raised when a peer has asked this copy to hand over to the installed one.</summary>
     public event Action? RestartRequested;
 
+    private static int DayOf(SaveSlot slot)
+    {
+        try
+        {
+            var evidence = SaveEvidence.Read(slot.Folder);
+            return evidence.Readable ? evidence.Day : 0;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return 0; }
+    }
+
+    /// <summary>Who has played in a save, by the names the game recorded.</summary>
+    private static List<string> PlayersOf(SaveSlot slot)
+    {
+        try
+        {
+            var path = Path.Combine(slot.Folder, "players.xml");
+            if (!File.Exists(path)) return new List<string>();
+
+            return System.Text.RegularExpressions.Regex
+                .Matches(File.ReadAllText(path), @"playername=""([^""]*)""")
+                .Select(m => m.Groups[1].Value)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return new List<string>();
+        }
+    }
+
     /// <summary>Everything on this PC that is waiting for somebody to decide about it.</summary>
     private LanResponse InboxList()
     {
@@ -518,6 +549,9 @@ public sealed class LanServer : IDisposable
                 SizeBytes = slot.SizeBytes,
                 LastPlayedAt = slot.LastWriteUtc,
                 PlayedSinceLastCopy = TransferEngine.LooksChangedSinceCommit(slot),
+                Day = DayOf(slot),
+                Players = PlayersOf(slot).Count,
+                PlayerNames = PlayersOf(slot),
             })
             .ToList();
 

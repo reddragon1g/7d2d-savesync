@@ -259,6 +259,15 @@ public static class Installer
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
     }
 
+    /// <summary>
+    /// Starts the installed copy for a handover, telling it to be patient about the slot.
+    ///
+    /// The copy doing the handing over is still running and still holding the single-instance
+    /// slot; the new one has to outlast that shutdown rather than give up on it.
+    /// </summary>
+    public static bool LaunchInstalledForHandover(bool background)
+        => LaunchInstalled(background ? "--handover --background" : "--handover");
+
     /// <summary>Starts the installed copy and returns true if it took over.</summary>
     public static bool LaunchInstalled(string? arguments = null)
     {

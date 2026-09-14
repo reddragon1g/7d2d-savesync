@@ -279,9 +279,11 @@ void PeerSaves(int seconds, string? which)
 
         foreach (var sv in saves.OrderByDescending(x => x.SizeBytes))
         {
-            Console.WriteLine($"  {sv.SaveName,-26} {sv.World,-18} {PathUtil.HumanBytes(sv.SizeBytes)}"
-                + $"  last played {sv.LastPlayedAt.ToLocalTime():yyyy-MM-dd HH:mm}"
+            Console.WriteLine($"  {sv.SaveName,-26} {sv.World,-18} day {sv.Day,-4}"
+                + $" {PathUtil.HumanBytes(sv.SizeBytes),-10} played {sv.LastPlayedAt.ToLocalTime():yyyy-MM-dd HH:mm}"
                 + $"  {(sv.Passport is null ? "never copied" : "id " + sv.SaveId[..8])}");
+            if (sv.PlayerNames.Count > 0)
+                Console.WriteLine($"      played by: {string.Join(", ", sv.PlayerNames)}");
         }
         Console.WriteLine();
     }

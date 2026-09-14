@@ -651,7 +651,7 @@ public sealed class MainForm : Form
                 // Launch first, exit second. A machine left with nothing running is unreachable,
                 // which is far worse than out of date, so the old copy only stands down once the
                 // new one is confirmed started.
-                bool handedOver = Installer.IsInstalled && Installer.LaunchInstalled();
+                bool handedOver = Installer.IsInstalled && Installer.LaunchInstalledForHandover(!Visible);
 
                 if (handedOver)
                 {
@@ -707,7 +707,7 @@ public sealed class MainForm : Form
 
             ActivityLog.Write("handing over to the installed copy on request");
 
-            if (!Installer.LaunchInstalled())
+            if (!Installer.LaunchInstalledForHandover(!Visible))
             {
                 ActivityLog.Write("the installed copy would not start; staying as we are");
                 return;
@@ -1139,7 +1139,7 @@ public sealed class MainForm : Form
                     "Switch to the installed copy"))
             {
                 ActivityLog.Write("handing over to the installed copy");
-                if (Installer.LaunchInstalled())
+                if (Installer.LaunchInstalledForHandover(background: false))
                 {
                     _reallyClosing = true;
                     Close();
