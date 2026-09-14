@@ -12,6 +12,7 @@ using SaveSync.Core;
 //   probe import   <userdata> <packageDir> [apply|take|keep]
 //   probe launch   [world] [saveName]               - start the game HERE, in that save
 //   probe launchplan [world] [saveName]             - print what a launch would run, start nothing
+//   probe spawnreset [seconds] [who]                - give back the borrowed spawn-screen setting
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 
@@ -51,6 +52,7 @@ try
         case "import": Import(At(1), At(2), Arg(3) ?? "apply"); break;
         case "launch": Launch(Arg(1), Arg(2), dryRun: false); break;
         case "launchplan": Launch(Arg(1), Arg(2), dryRun: true); break;
+        case "spawnreset": SpawnReset(int.TryParse(Arg(1), out var zw) ? zw : 8, Arg(2)); break;
         default:
             Console.WriteLine($"unknown command: {cmd}");
             return 2;
@@ -461,6 +463,33 @@ void Kinship(string saveA, string saveB)
     Console.WriteLine($"VERDICT: {v.Kind}");
     Console.WriteLine($"  {v.Headline}");
     foreach (var r in v.Reasons) Console.WriteLine($"    - {r}");
+}
+
+/// <summary>
+/// Asks other PCs to give back the spawn-screen setting a remote launch borrows.
+///
+/// The undo for "game start". Needed for real once already: a launch borrowed the setting and the
+/// program was updated and restarted before it could hand it back.
+/// </summary>
+void SpawnReset(int seconds, string? which)
+{
+    var config = AppConfig.Load();
+    using var discovery = new SaveSync.Core.Lan.Discovery(config) { PersonName = "probe" };
+    discovery.Start();
+    Thread.Sleep(TimeSpan.FromSeconds(seconds));
+
+    var peers = discovery.Peers
+        .Where(p => which is null || p.DisplayName.Contains(which, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    if (peers.Count == 0) { Console.WriteLine("no other PC answered."); return; }
+
+    var client = new SaveSync.Core.Lan.LanClient(config);
+    foreach (var peer in peers)
+    {
+        var r = client.SpawnPrefResetAsync(peer, "probe").GetAwaiter().GetResult();
+        Console.WriteLine($"  {peer.DisplayName,-18} {(r.Ok ? "OK" : "refused")} - {r.Message}");
+    }
 }
 
 /// <summary>

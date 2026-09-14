@@ -412,6 +412,11 @@ public sealed class MainForm : Form
             + $"from {AppContext.BaseDirectory}  installed={Installer.IsInstalled}");
         ActivityLog.Write($"saves at  {_engine.Location.UserDataRoot}  ({_engine.Location.Provenance})");
 
+        // A setting borrowed to start the game for somebody, by a copy of this program that was
+        // updated or restarted before it could hand it back. Restarting remotely is routine here,
+        // so this is the normal way that note gets left behind rather than an unusual one.
+        GameLauncher.RestorePendingSpawnPref();
+
         try
         {
             foreach (var note in _engine.RecoverInterrupted())

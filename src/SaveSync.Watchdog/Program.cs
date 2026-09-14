@@ -166,6 +166,11 @@ static async Task WatchAsync(CancellationToken ct)
         {
             var config = AppConfig.Load();
 
+            // A setting borrowed to start the game, whose owner never got the chance to hand it
+            // back. This process outlives the one that borrowed it, which makes it the right
+            // place to notice - it is a no-op unless a note is actually waiting.
+            GameLauncher.RestorePendingSpawnPref();
+
             if (AppIsAnswering(config))
             {
                 if (missedSince is not null) Log("the app is answering again");

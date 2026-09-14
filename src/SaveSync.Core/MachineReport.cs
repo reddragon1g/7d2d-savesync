@@ -47,8 +47,26 @@ public sealed class MachineReport
     /// </summary>
     public string LaunchSetup { get; init; } = "";
 
+    /// <summary>
+    /// The command line that PC's own launcher last started the game with, verbatim.
+    ///
+    /// The settings file says what was chosen; this says what was actually done. They can disagree
+    /// - a setting changed since the last launch has not taken effect yet - and when the question
+    /// is "is EasyAntiCheat in play on that machine", the answer is here rather than there.
+    /// </summary>
+    public string LastLaunch { get; init; } = "";
+
     /// <summary>Which save the game is in, read out of its own log. Empty when it has loaded none.</summary>
     public string LoadedSave { get; init; } = "";
+
+    /// <summary>
+    /// Whether this PC is currently set to skip the spawn screen. Null when it has never been set.
+    ///
+    /// Reported because this program borrows that setting to start a game unattended and is meant
+    /// to hand it back. Something that quietly changes a setting on somebody else's machine should
+    /// at minimum be willing to say so.
+    /// </summary>
+    public bool? SpawnButtonSkipped { get; init; }
 
     public static MachineReport Read(GameLocation? location)
     {
@@ -70,7 +88,9 @@ public sealed class MachineReport
             TopProcesses = ProcessUse.Biggest(10),
             Game = location is null ? null : GameStats.ReadLatest(location),
             LaunchSetup = location is null ? "" : GameLauncher.ReadSettings(location).Describe(),
+            LastLaunch = location is null ? "" : DescribeLastLaunch(location),
             LoadedSave = location is null ? "" : GameLauncher.ReadLoadedSave(location)?.Describe() ?? "",
+            SpawnButtonSkipped = GameLauncher.SpawnButtonSkipped(),
         };
     }
 
@@ -99,7 +119,15 @@ public sealed class MachineReport
 
         lines.Add(GameRunning ? "The game is running right now." : "The game is not running.");
         if (LoadedSave.Length > 0) lines.Add("Save: " + LoadedSave);
-        if (LaunchSetup.Length > 0) lines.Add("Starts with: " + LaunchSetup);
+        if (LaunchSetup.Length > 0) lines.Add("Launcher settings: " + LaunchSetup);
+        if (LastLaunch.Length > 0)
+        {
+            lines.Add("Last launch: " + LastLaunch);
+            if (EacDisagreement() is { } note) lines.Add("  " + note);
+        }
+        if (SpawnButtonSkipped == true)
+            lines.Add("Spawn screen: skipped (this program borrowed that setting; it is given back "
+                      + "when the game closes)");
         if (Game is not null) lines.Add(Game.Describe());
 
         if (TopProcesses.Count > 0)
@@ -124,6 +152,38 @@ public sealed class MachineReport
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Says so when the launcher settings and the actual last launch disagree about EasyAntiCheat.
+    ///
+    /// They can, and on both of these machines they do: the settings file says EAC is on while
+    /// every real launch carries -noeac. A settings file is what somebody chose; the launch is
+    /// what happened, and a setting changed after the last launch has not taken effect yet.
+    /// Reporting only the first would have answered "is EAC in play over there" with the wrong
+    /// answer, confidently.
+    /// </summary>
+    private string? EacDisagreement()
+    {
+        var actuallyOff = LastLaunch.Contains("-noeac", StringComparison.OrdinalIgnoreCase);
+        var actuallyOn = LastLaunch.Contains("_EAC.exe", StringComparison.OrdinalIgnoreCase);
+        var settingsSayOn = LaunchSetup.Contains("EAC ON", StringComparison.Ordinal);
+
+        if (actuallyOff && settingsSayOn)
+            return "EAC is OFF in practice - the settings file says on, but the last launch did not use it.";
+        if (actuallyOn && !settingsSayOn)
+            return "EAC is ON in practice, whatever the settings file says.";
+
+        return null;
+    }
+
+    /// <summary>The last launch as one readable line, or nothing when the game has never run here.</summary>
+    private static string DescribeLastLaunch(GameLocation location)
+    {
+        var last = GameLauncher.LastLauncherInvocation(location);
+        if (last is null) return "";
+
+        return Path.GetFileName(last.Value.Exe) + " " + string.Join(" ", last.Value.Args);
     }
 
     /// <summary>

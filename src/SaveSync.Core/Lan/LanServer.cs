@@ -138,7 +138,7 @@ public sealed class LanServer : IDisposable
                     if (request.Op is "hello" or "pair" or "list-saves" or "request-send"
                         or "get-log" or "update-offer" or "update-file"
                         or "inbox-list" or "inbox-keep-both" or "restart" or "rename-save"
-                        or "get-machine" or "game-stop" or "game-start") return;
+                        or "get-machine" or "game-stop" or "game-start" or "spawn-pref-reset") return;
                 }
             }
             catch (OperationCanceledException) { }
@@ -176,6 +176,7 @@ public sealed class LanServer : IDisposable
             "get-machine" => GetMachine(),
             "game-stop" => GameStop(request),
             "game-start" => GameStart(request),
+            "spawn-pref-reset" => SpawnPrefReset(request),
             "inbox-list" => InboxList(),
             "inbox-keep-both" => InboxKeepBoth(request),
             "restart" => Restart(request),
@@ -370,6 +371,20 @@ public sealed class LanServer : IDisposable
         return result.Ok
             ? new LanResponse { Ok = true, Message = result.Message }
             : LanResponse.Fail(result.Message);
+    }
+
+    /// <summary>
+    /// Gives back the spawn-screen setting this program borrows to start a game unattended.
+    ///
+    /// The undo for game-start. Worth having reachable from another machine for the same reason
+    /// everything else here is: the PC that needs it put back is the one nobody is sitting at.
+    /// </summary>
+    private LanResponse SpawnPrefReset(LanRequest request)
+    {
+        var (ok, message) = GameLauncher.GiveBackSpawnPref();
+        ActivityLog.Write($"asked by {request.DisplayName} to give the spawn-button setting back: {message}");
+
+        return ok ? new LanResponse { Ok = true, Message = message } : LanResponse.Fail(message);
     }
 
     /// <summary>What this PC is, and how the game is behaving on it right now.</summary>

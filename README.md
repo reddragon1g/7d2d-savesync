@@ -21,7 +21,7 @@ Windows will say "Windows protected your PC" the first time, because the program
 ## Build
 
 ```
-dotnet test src/SaveSync.Core.Tests/SaveSync.Core.Tests.csproj      # 210 tests
+dotnet test src/SaveSync.Core.Tests/SaveSync.Core.Tests.csproj      # 218 tests
 dotnet publish src/SaveSync.App/SaveSync.App.csproj -c Release -o dist
 ```
 
@@ -121,13 +121,14 @@ rest of it, and none of them needs a person at the far end to click anything:
 
 | Ask | What happens there |
 |---|---|
-| `get-machine` | CPU, every GPU, memory, commit charge, biggest processes, the game's own frame-rate samples, which save is loaded, and how that PC starts the game |
+| `get-machine` | CPU, every GPU, memory, commit charge, biggest processes, the game's own frame-rate samples, which save is loaded, and the command line that PC's launcher actually used |
 | `get-log` | That PC's account of what it has been doing |
 | `rename-save` | Renames one save. Nothing copied, nothing deleted |
 | `restart` | Hands over to the installed copy, so a pushed update takes effect |
 | `update-offer` / `update-file` | A newer program, checked against a checksum declared before a byte is sent |
 | `game-stop` | Asks the game to close. Asked, never killed - it writes the world on the way out |
-| `game-start` | Starts the game, optionally **straight into a named save** |
+| `game-start` | Starts the game, optionally **straight into a named save**, past the spawn screen |
+| `spawn-pref-reset` | Hands back the one setting a remote launch borrows |
 
 ### Starting a named save from another PC
 
@@ -144,6 +145,38 @@ sitting at its menu. The bool switches on `Platform.PlatformApplicationManager.L
 state machine that finds that world and save among the ones on the PC and works the menu itself:
 `ContinueGameOpen -> ContinueGameSelect -> ContinueGamePlay -> Done`. It narrates that to the log,
 so the result is readable afterwards from another machine.
+
+### The last click: the spawn screen
+
+Loading the save is not the same as being in it. The game loads the world and then waits on a
+Spawn button, in `GameManager`:
+
+```csharp
+if (!GamePrefs.GetBool(EnumGamePrefs.SkipSpawnButton) && !IsEditMode())
+{
+    canSpawnPlayer = false;
+    XUiC_SpawnSelectionWindow.Open(...);
+    while (!canSpawnPlayer) yield return null;
+}
+```
+
+That button cannot be automated - the only auto-press in the game is gated on `AutomationRunner`,
+whose script loader logs `Disabled for this build type` in retail builds. But the *gate* is a game
+preference, so `-SkipSpawnButton=true` goes on the command line and the world comes up with the
+player in it. It affects only this gate; choosing where to respawn after dying is a different
+window (`_chooseSpawnPosition: true`) and is untouched.
+
+**That preference persists**, which is the part worth being careful about: it is declared with the
+`StandaloneWindows` flag, so the game writes it to the registry on exit and it would stay changed
+for every launch afterwards. So it is borrowed, not taken — captured before the launch and put
+back once the game closes, including the common case of "it was never set", which restores by
+deleting rather than by writing a zero.
+
+The restore is written to `%LOCALAPPDATA%\SaveSync\spawn-pref-restore.json` as well as held in
+memory, because this program is updated and restarted from another machine as a matter of routine
+and an in-memory restore does not survive that. It did not survive it, once, on a real laptop —
+which is also why `spawn-pref-reset` exists. Anything that borrows a setting on somebody else's PC
+should ship with the button that gives it back.
 
 Two things follow from how the game behaves, and both are in `GameLauncher`:
 
@@ -259,7 +292,7 @@ src/SaveSync.Core/Mods.cs discovery, comparison and install of mod folders
 src/SaveSync.Core/Lan/    network: framing, server, client, discovery, peer comparison
 src/SaveSync.Core/GameLauncher.cs  starting the game, and a named save, from another PC
 src/SaveSync.Watchdog/    tiny keep-alive process, reachable when the main one is not
-src/SaveSync.Core.Tests/  210 tests: synthetic saves and mods, plus real TCP transfers on loopback
+src/SaveSync.Core.Tests/  218 tests: synthetic saves and mods, plus real TCP transfers on loopback
 src/SaveSync.App/         WinForms UI (dark, 7DTD-styled), single screen, two buttons
 tools/SaveSync.Probe/     dev CLI to drive the engine headlessly
 docs/quick-start.html     printable instructions for the end users

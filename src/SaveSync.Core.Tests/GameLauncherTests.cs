@@ -1,3 +1,4 @@
+using Microsoft.Win32;
 using SaveSync.Core;
 using Xunit;
 
@@ -134,6 +135,55 @@ public class GameLauncherTests : IDisposable
                      plan.Arguments.First(a => a.StartsWith("-name=", StringComparison.Ordinal)));
     }
 
+    /// <summary>
+    /// Loading the world is not the same as being in it.
+    ///
+    /// The game loads the save and then waits on a Spawn button, which is the last click standing
+    /// between here and a machine that is actually playing. There is no automating that button -
+    /// the only auto-press in the game is gated on its AutomationRunner, whose script loader logs
+    /// "Disabled for this build type" in retail - but the gate itself is a game preference.
+    /// </summary>
+    [Fact]
+    public void The_spawn_screen_is_skipped_when_a_save_is_asked_for()
+    {
+        WriteSave("Navezgane", "Chris Main Save");
+        WriteLauncherLog(Path.Combine(_install, "7DaysToDie.exe"));
+
+        var plan = GameLauncher.PlanLaunch(Location(), _install, "Navezgane", "Chris Main Save");
+
+        Assert.Contains("-SkipSpawnButton=true", plan.Arguments);
+    }
+
+    /// <summary>
+    /// But not when the game is merely being switched on for somebody.
+    ///
+    /// The preference persists, so borrowing it has to be tied to the reason for borrowing it:
+    /// nobody is there to press the button. Somebody who IS there keeps their own settings.
+    /// </summary>
+    [Fact]
+    public void The_spawn_screen_is_left_alone_when_no_save_is_asked_for()
+    {
+        WriteLauncherLog(Path.Combine(_install, "7DaysToDie.exe"));
+
+        var plan = GameLauncher.PlanLaunch(Location(), _install, null, null);
+
+        Assert.DoesNotContain(plan.Arguments,
+                              a => a.StartsWith("-SkipSpawnButton", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Two launches in a row do not stack the setting up twice.</summary>
+    [Fact]
+    public void The_spawn_setting_is_not_passed_twice()
+    {
+        WriteSave("Navezgane", "Chris Main Save");
+        WriteLauncherLog(Path.Combine(_install, "7DaysToDie.exe"), "-SkipSpawnButton=true");
+
+        var plan = GameLauncher.PlanLaunch(Location(), _install, "Navezgane", "Chris Main Save");
+
+        Assert.Single(plan.Arguments,
+                      a => a.StartsWith("-SkipSpawnButton", StringComparison.OrdinalIgnoreCase));
+    }
+
     // ---------------------------------------------------------------- not inventing a launch
 
     /// <summary>
@@ -222,6 +272,92 @@ public class GameLauncherTests : IDisposable
         Assert.Single(plan.Arguments, a => a.StartsWith("-name=", StringComparison.Ordinal));
         Assert.Contains("-name=Second", plan.Arguments);
         Assert.DoesNotContain("-name=First", plan.Arguments);
+    }
+
+    /// <summary>
+    /// The borrowed setting is written down, so it survives this program being restarted.
+    ///
+    /// It has to. The restore otherwise lives only in a background task, and this program is
+    /// updated and restarted from another machine as a matter of routine - which would leave
+    /// somebody's spawn screen permanently skipped with nothing to explain why.
+    /// </summary>
+    [Fact]
+    public void A_borrowed_setting_is_written_down_and_can_be_read_back()
+    {
+        var backup = new GameLauncher.SpawnPrefBackup("SkipSpawnButton_h123", 0, RegistryValueKind.DWord);
+
+        GameLauncher.WriteDownRestore(backup);
+        try
+        {
+            Assert.True(File.Exists(GameLauncher.PendingRestorePath));
+
+            var note = Json.ReadFile<GameLauncher.PendingRestore>(GameLauncher.PendingRestorePath);
+            Assert.NotNull(note);
+            Assert.Equal("SkipSpawnButton_h123", note!.ValueName);
+            Assert.Equal(0, note.Number);
+            Assert.Equal("DWord", note.Kind);
+        }
+        finally { GameLauncher.ForgetRestore(); }
+    }
+
+    /// <summary>
+    /// "It was never set" is a state worth recording, and the common one.
+    ///
+    /// Neither of these two machines has ever written that preference, so restoring it means
+    /// deleting what the game wrote - not writing a zero, which would leave a value behind that
+    /// was not there before.
+    /// </summary>
+    [Fact]
+    public void A_setting_that_was_never_there_is_written_down_as_absent()
+    {
+        GameLauncher.WriteDownRestore(
+            new GameLauncher.SpawnPrefBackup(null, null, RegistryValueKind.Unknown));
+        try
+        {
+            var note = Json.ReadFile<GameLauncher.PendingRestore>(GameLauncher.PendingRestorePath);
+            Assert.NotNull(note);
+            Assert.Null(note!.ValueName);
+            Assert.Null(note.Number);
+        }
+        finally { GameLauncher.ForgetRestore(); }
+    }
+
+    /// <summary>Nothing borrowed, nothing written down.</summary>
+    [Fact]
+    public void Nothing_is_written_down_when_nothing_was_borrowed()
+    {
+        GameLauncher.ForgetRestore();
+        GameLauncher.WriteDownRestore(null);
+        Assert.False(File.Exists(GameLauncher.PendingRestorePath));
+    }
+
+    /// <summary>
+    /// A launch describes itself by what it does, not by what a settings file claims.
+    ///
+    /// Both real machines here have a launchersettings.json saying EasyAntiCheat is on while every
+    /// actual launch carries -noeac, so describing launches by the settings file reported "EAC ON"
+    /// about two PCs running without it - confidently, and in every message.
+    /// </summary>
+    [Fact]
+    public void A_repeated_launch_reports_the_EAC_it_actually_uses_not_the_one_on_file()
+    {
+        WriteLauncherSettings(useEac: true);        // the file says on...
+        WriteLauncherLog(Path.Combine(_install, "7DaysToDie.exe"), "-force-d3d11", "-noeac");   // ...reality says off
+
+        var plan = GameLauncher.PlanLaunch(Location(), _install, null, null);
+
+        Assert.Contains("EAC off", plan.Basis);
+        Assert.DoesNotContain("EAC ON", plan.Basis);
+    }
+
+    [Fact]
+    public void A_launch_that_really_uses_EAC_says_so()
+    {
+        WriteLauncherLog(Path.Combine(_install, "7DaysToDie_EAC.exe"), "-force-d3d11");
+
+        var plan = GameLauncher.PlanLaunch(Location(), _install, null, null);
+
+        Assert.Contains("EAC ON", plan.Basis);
     }
 
     // ---------------------------------------------------------------- the guard
