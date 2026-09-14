@@ -38,7 +38,7 @@ try
         case "peers": Peers(int.TryParse(Arg(1), out var secs) ? secs : 8); break;
         case "peerlog": PeerLog(int.TryParse(Arg(1), out var wait) ? wait : 8, Arg(2)); break;
         case "pushupdate": PushUpdate(At(1), int.TryParse(Arg(2), out var w2) ? w2 : 8, Arg(3)); break;
-        case "relay": Relay(At(1), At(2), At(3), At(4), At(5)); break;
+        case "relay": Relay(At(1), At(2), At(3), At(4), At(5), Arg(6)); break;
         case "inbox": Inbox_(int.TryParse(Arg(1), out var iw) ? iw : 8, Arg(2)); break;
         case "restart": RestartPeer(int.TryParse(Arg(1), out var rw) ? rw : 8, Arg(2)); break;
         case "peersaves": PeerSaves(int.TryParse(Arg(1), out var sw) ? sw : 8, Arg(2)); break;
@@ -168,7 +168,7 @@ void PushUpdate(string exePath, int seconds, string? which)
 /// judges it with its own engine exactly as if it had arrived on a stick: nothing is applied that
 /// would not have been applied anyway, and anything needing a decision waits for a person there.
 /// </summary>
-void Relay(string userData, string fromName, string toName, string world, string saveName)
+void Relay(string userData, string fromName, string toName, string world, string saveName, string? callItInstead)
 {
     var config = AppConfig.Load();
     var engine = Engine(userData);
@@ -225,6 +225,28 @@ void Relay(string userData, string fromName, string toName, string world, string
     var info = PackageInfo.Load(arrived);
     Console.WriteLine($"arrived: {info?.Passport.SaveName} v{info?.Passport.Ordinal}  "
         + $"{PathUtil.HumanBytes(info?.PayloadBytes ?? 0)}  mods={info?.Mods.Count ?? 0}");
+
+    // Renaming it here, in the middle, is what lets it land on a machine that already has a save
+    // by that name without anybody having to choose between them. The identity is left exactly as
+    // it is, so the sending PC's later versions still recognise it and keep updating it - only the
+    // name it arrives under changes, and it arrives somewhere nothing already lives.
+    if (!string.IsNullOrWhiteSpace(callItInstead) && info is not null)
+    {
+        var clean = PathUtil.Sanitize(callItInstead!.Trim());
+        Console.WriteLine($"renaming it in transit: \"{info.Passport.SaveName}\" -> \"{clean}\"");
+        Console.WriteLine($"  keeping its identity ({info.Passport.SaveId[..8]}) so it stays linked to {fromName}");
+
+        info.Passport.SaveName = clean;
+        info.Save(arrived);
+
+        // The copy inside the payload too, so anything reading the folder agrees with package.json.
+        var inner = Passport.Load(PackageLayout.Payload(arrived));
+        if (inner is not null)
+        {
+            inner.SaveName = clean;
+            inner.Save(PackageLayout.Payload(arrived));
+        }
+    }
 
     Console.WriteLine($"passing it to {to.DisplayName}...");
     var sent = client.SendPackageAsync(to, arrived, "relay").GetAwaiter().GetResult();

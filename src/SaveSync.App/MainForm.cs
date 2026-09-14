@@ -640,8 +640,34 @@ public sealed class MainForm : Form
                 Installer.InstallFrom(stagedExe);
                 ActivityLog.Write($"installed the update to {version} that arrived over the network");
 
-                // Honest about when it takes effect: the copy running right now is still the old
-                // one, because a program cannot replace itself underneath its own feet.
+                // Take it into use now rather than at some future launch.
+                //
+                // A program cannot replace itself while running - but it can start the new copy and
+                // step aside, because that copy is a different file. Waiting for "next time this PC
+                // starts" meant a machine nobody sits at stayed on the old version indefinitely,
+                // which in turn meant nothing added to the newer version could ever be used on it:
+                // every fix was installed and unreachable at the same time.
+                //
+                // Launch first, exit second. A machine left with nothing running is unreachable,
+                // which is far worse than out of date, so the old copy only stands down once the
+                // new one is confirmed started.
+                bool handedOver = Installer.IsInstalled && Installer.LaunchInstalled();
+
+                if (handedOver)
+                {
+                    ActivityLog.Write($"handing over to {version} now that it is installed");
+                    _tray.ShowBalloonTip(6000, "Updated",
+                        $"Save Transfer {version} is now running. Your saves and backups are untouched.",
+                        ToolTipIcon.Info);
+
+                    _reallyClosing = true;
+                    Close();
+                    return;
+                }
+
+                ActivityLog.Write($"installed {version}, but could not hand over to it; "
+                    + "it will be used at the next launch");
+
                 _tray.ShowBalloonTip(8000, "This PC has a newer version ready",
                     $"Save Transfer {version} is installed and will be the one that runs from next "
                     + "time this PC starts. Your saves and backups are untouched.",
