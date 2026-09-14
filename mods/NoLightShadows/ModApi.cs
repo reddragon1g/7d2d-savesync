@@ -131,6 +131,11 @@ public static class SelfTestRunner
 
         _finished = true;
         SelfTest.Run(world, player.position);
+
+        // Something to photograph. Only when asked for, and only ever in a throwaway world - it
+        // writes blocks into whatever save is loaded.
+        if (TestScene.Requested)
+            TestScene.Build(world, player.position, player.GetForwardVector());
     }
 }
 
