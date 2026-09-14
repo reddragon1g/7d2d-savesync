@@ -77,6 +77,30 @@ public static class LightLodVoxelMask
         }
     }
 
+    /// <summary>
+    /// With -NoLightShadowsNoMask, shadows come off and no mask goes on.
+    ///
+    /// This is the control the comparison actually needs, and it took a wasted run to work out
+    /// why. Turning the whole mod OFF is not a control: it leaves the game's own shadow maps in
+    /// place, which contain the light perfectly well, so a dark wall in that photograph says
+    /// nothing about the mask.
+    ///
+    /// The question is whether the MASK stops the light, so the control has to be the same light
+    /// with its shadows removed and nothing put in their place - which is exactly what the first
+    /// version of this mod shipped, and exactly what should bleed.
+    /// </summary>
+    private static bool NoMask
+    {
+        get
+        {
+            foreach (var arg in System.Environment.GetCommandLineArgs())
+                if (arg.StartsWith("-NoLightShadowsNoMask", System.StringComparison.OrdinalIgnoreCase))
+                    return true;
+
+            return false;
+        }
+    }
+
     public static void Postfix(LightLOD __instance)
     {
         if (Disabled) return;
@@ -94,7 +118,19 @@ public static class LightLodVoxelMask
 
         // Order is everything. Shadows come off only once the mask is on, so a light is never
         // left with neither - which would be a light shining straight through the wall.
-        if (!LightMasks.Apply(light, world)) return;
+        // The control: shadows off, nothing in their place. What should bleed.
+        if (NoMask)
+        {
+            if (light.shadows != LightShadows.None) light.shadows = LightShadows.None;
+            return;
+        }
+
+        // lightRangeMaster, not light.range. LightLOD rewrites light.range every frame to fade
+        // lights with distance, so the live value is never twice the same and anything keyed to
+        // it rebuilds forever.
+        var stableRange = __instance.lightRangeMaster > 0.01f ? __instance.lightRangeMaster : light.range;
+
+        if (!LightMasks.Apply(light, world, stableRange)) return;
 
         if (light.shadows != LightShadows.None) light.shadows = LightShadows.None;
     }

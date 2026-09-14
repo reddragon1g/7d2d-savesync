@@ -55,6 +55,17 @@ public static class LightMasks
     /// </summary>
     public static int Generation { get; private set; }
 
+    /// <summary>
+    /// How many masks have been built since the world loaded.
+    ///
+    /// Watched because the dangerous failure here is not building too few but building the same
+    /// one over and over: at about a millisecond each, a mask rebuilt every frame costs far more
+    /// than the shadow map it replaced. It happened - LightLOD modulates a light's range every
+    /// frame for distance fading, so keying staleness on the CURRENT range meant every light
+    /// looked changed, always.
+    /// </summary>
+    public static int Built { get; private set; }
+
     public static void WorldChanged() => Generation++;
 
     public static void Forget()
@@ -64,6 +75,7 @@ public static class LightMasks
 
         Masks.Clear();
         Generation = 0;
+        Built = 0;
     }
 
     /// <summary>
@@ -73,12 +85,12 @@ public static class LightMasks
     /// means "not yet" - and the caller must then leave the light alone, because a light with no
     /// shadow map AND no mask is a light that shines through walls.
     /// </summary>
-    public static bool Apply(Light light, World world)
+    public static bool Apply(Light light, World world, float stableRange)
     {
         if (light == null || world == null) return false;
 
-        // A light with no reach cannot escape anything, and would divide by zero below.
-        if (light.range <= 0.01f) return false;
+        // A light with no reach cannot escape anything.
+        if (stableRange <= 0.01f) return false;
 
         int id = light.GetInstanceID();
         var position = light.transform.position;
@@ -96,7 +108,7 @@ public static class LightMasks
         {
             bool stale = existing.BuiltGeneration != Generation
                          || (existing.BuiltAt - position).sqrMagnitude > MovedEnough * MovedEnough
-                         || Mathf.Abs(existing.BuiltRange - light.range) > MovedEnough;
+                         || Mathf.Abs(existing.BuiltRange - stableRange) > MovedEnough;
 
             if (!stale)
             {
@@ -114,7 +126,7 @@ public static class LightMasks
         // which move as the player travels. Origin is the offset between them.
         var inWorld = position - Origin.position;
 
-        var cookie = VoxelShadow.Build(world, inWorld, light.range, VoxelShadow.DefaultResolution);
+        var cookie = VoxelShadow.Build(world, inWorld, stableRange, VoxelShadow.DefaultResolution);
 
         if (existing?.Cookie != null) Object.Destroy(existing.Cookie);
 
@@ -122,18 +134,20 @@ public static class LightMasks
         {
             Cookie = cookie,
             BuiltAt = position,
-            BuiltRange = light.range,
+            BuiltRange = stableRange,
             BuiltGeneration = Generation,
         };
 
         light.cookie = cookie;
 
-        // Logged for the first few only. "Is this mod doing anything at all" is the question every
-        // other observation depends on, and a photograph cannot answer it - a wall can look lit
-        // because light is bleeding through it, or because it is simply a lighter colour.
-        if (Masks.Count <= 5)
-            Log.Out($"[NoLightShadows] masked light #{Masks.Count} at "
-                    + $"{inWorld.x:0.0}, {inWorld.y:0.0}, {inWorld.z:0.0}, range {light.range:0.0}");
+        Built++;
+
+        // Logged for the first few only, and counted for all of them. "Is this running at all" is
+        // the question every other observation depends on and a photograph cannot answer it - but
+        // the COUNT is what catches the opposite failure, of running far too often.
+        if (Built <= 5)
+            Log.Out($"[NoLightShadows] masked light #{Built} at "
+                    + $"{inWorld.x:0.0}, {inWorld.y:0.0}, {inWorld.z:0.0}, range {stableRange:0.0}");
 
         return true;
     }
