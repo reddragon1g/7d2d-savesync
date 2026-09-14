@@ -138,7 +138,8 @@ public sealed class LanServer : IDisposable
                     if (request.Op is "hello" or "pair" or "list-saves" or "request-send"
                         or "get-log" or "update-offer" or "update-file"
                         or "inbox-list" or "inbox-keep-both" or "restart" or "rename-save"
-                        or "get-machine" or "game-stop" or "game-start" or "spawn-pref-reset") return;
+                        or "get-machine" or "game-stop" or "game-start" or "spawn-pref-reset"
+                        or "gpu-choice") return;
                 }
             }
             catch (OperationCanceledException) { }
@@ -177,6 +178,7 @@ public sealed class LanServer : IDisposable
             "game-stop" => GameStop(request),
             "game-start" => GameStart(request),
             "spawn-pref-reset" => SpawnPrefReset(request),
+            "gpu-choice" => GpuChoiceOp(request),
             "inbox-list" => InboxList(),
             "inbox-keep-both" => InboxKeepBoth(request),
             "restart" => Restart(request),
@@ -366,7 +368,8 @@ public sealed class LanServer : IDisposable
     private LanResponse GameStart(LanRequest request)
     {
         var location = _engineProvider()?.Location;
-        var result = GameLauncher.Start(location, request.World, request.SaveName, request.DisplayName);
+        var result = GameLauncher.Start(
+            location, request.World, request.SaveName, request.DisplayName, request.Tune);
 
         return result.Ok
             ? new LanResponse { Ok = true, Message = result.Message }
@@ -384,6 +387,34 @@ public sealed class LanServer : IDisposable
         var (ok, message) = GameLauncher.GiveBackSpawnPref();
         ActivityLog.Write($"asked by {request.DisplayName} to give the spawn-button setting back: {message}");
 
+        return ok ? new LanResponse { Ok = true, Message = message } : LanResponse.Fail(message);
+    }
+
+    /// <summary>
+    /// Points the game at one graphics chip or the other, or puts that choice back.
+    ///
+    /// Worth doing from another machine for the usual reason - the PC that needs it is the one
+    /// nobody is sitting at - and because the question it answers is genuinely open on a laptop
+    /// whose discrete card has lost its cooling.
+    /// </summary>
+    private LanResponse GpuChoiceOp(LanRequest request)
+    {
+        var install = GamePaths.ResolveInstall(_engineProvider()?.Location?.InstallDir);
+        if (install is null) return LanResponse.Fail("The game does not appear to be installed on this PC.");
+
+        var exe = Path.Combine(install, GamePaths.ProcessName + ".exe");
+
+        if (string.Equals(request.Gpu, "back", StringComparison.OrdinalIgnoreCase))
+        {
+            var (undone, note) = GpuChoice.GiveBack();
+            ActivityLog.Write($"asked by {request.DisplayName} to put the graphics preference back: {note}");
+            return undone ? new LanResponse { Ok = true, Message = note } : LanResponse.Fail(note);
+        }
+
+        var choice = GpuChoice.FromName(request.Gpu);
+        var (ok, message) = GpuChoice.Set(exe, choice);
+
+        ActivityLog.Write($"asked by {request.DisplayName} to use {GpuChoice.Describe(choice)}: {message}");
         return ok ? new LanResponse { Ok = true, Message = message } : LanResponse.Fail(message);
     }
 

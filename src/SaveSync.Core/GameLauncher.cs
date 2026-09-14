@@ -87,6 +87,8 @@ public static class GameLauncher
     /// <summary>Unity stores a preference as "Name_h" plus a hash, so it is found by prefix.</summary>
     public const string SkipSpawnPrefPrefix = "SkipSpawnButton_h";
 
+    public const string SkipSpawnPref = "SkipSpawnButton";
+
     // ------------------------------------------------------------------ settings
 
     /// <summary>
@@ -290,7 +292,8 @@ public static class GameLauncher
     ///
     /// Pass a null world and save to start it the way a person would and leave it at its menu.
     /// </summary>
-    public static Plan PlanLaunch(GameLocation location, string installDir, string? world, string? saveName)
+    public static Plan PlanLaunch(
+        GameLocation location, string installDir, string? world, string? saveName, string? tune = null)
     {
         var fromLog = LastLauncherInvocation(location);
         var settings = ReadSettings(location);
@@ -338,6 +341,18 @@ public static class GameLauncher
             args.Add(SkipSpawnArg);
         }
 
+        // Settings for a machine that cannot cool itself. Borrowed like everything else here, so
+        // the person whose PC this is gets their own settings back when they close the game.
+        var profile = GameTuning.ByName(tune);
+        if (profile is not null)
+        {
+            foreach (var setting in profile)
+            {
+                args = StripArg(args, $"-{setting.Pref}=", takesValue: false);
+                args.Add($"-{setting.Pref}={setting.Value}");
+            }
+        }
+
         return new Plan(exe, args, logFile, basis);
     }
 
@@ -377,290 +392,26 @@ public static class GameLauncher
     // ------------------------------------------------------------------ putting it back
 
     /// <summary>
-    /// What the spawn-button preference was before we touched it.
-    ///
-    /// It has to be captured, because the game persists that preference: it is declared with the
-    /// StandaloneWindows flag, so it is written to the registry when the game exits and would stay
-    /// changed for every launch afterwards. Somebody starting the game themselves next week would
-    /// find a step missing and no explanation for it. Borrowing a setting is fine; keeping it is
-    /// not.
-    ///
-    /// Absent is a real state, and the common one - the preference has never been written on
-    /// either of these machines. Restoring "absent" means deleting whatever the game wrote.
+    /// Whether this PC is currently set to skip the spawn button. Null when it has never been set.
     /// </summary>
-    public sealed record SpawnPrefBackup(string? ValueName, object? Data, RegistryValueKind Kind)
-    {
-        public bool WasAbsent => ValueName is null;
-    }
-
-    /// <summary>
-    /// Where a pending restore is written down, so it survives this program stopping.
-    ///
-    /// The restore used to live only in a background task, which meant a program that was updated,
-    /// restarted or killed while the game was running left the borrowed setting behind forever -
-    /// and this program is restarted remotely as a matter of routine. A note on disk is read back
-    /// at startup and the setting put right then.
-    /// </summary>
-    public static string PendingRestorePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "SaveSync", "spawn-pref-restore.json");
-
-    /// <summary>The written-down form. Kept flat so a person can read it and undo it by hand.</summary>
-    public sealed class PendingRestore
-    {
-        public string? ValueName { get; set; }
-        public string Kind { get; set; } = "";
-        public int? Number { get; set; }
-        public string? Text { get; set; }
-        public string? Base64 { get; set; }
-        public DateTimeOffset WrittenAt { get; set; } = DateTimeOffset.Now;
-    }
-
-    public static void WriteDownRestore(SpawnPrefBackup? backup)
-    {
-        if (backup is null) return;
-
-        try
-        {
-            var note = new PendingRestore { ValueName = backup.ValueName, Kind = backup.Kind.ToString() };
-
-            switch (backup.Data)
-            {
-                case int i: note.Number = i; break;
-                case long l: note.Number = (int)l; break;
-                case string s: note.Text = s; break;
-                case byte[] b: note.Base64 = Convert.ToBase64String(b); break;
-            }
-
-            Json.WriteFileAtomic(PendingRestorePath, note);
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        {
-            // A restore that cannot be written down is still attempted in this process.
-        }
-    }
-
-    public static void ForgetRestore()
-    {
-        try { File.Delete(PendingRestorePath); }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-    }
-
-    /// <summary>
-    /// Puts back a setting borrowed by a copy of this program that is no longer running.
-    ///
-    /// Called at startup. Waits for the game to be closed first, because putting it back while the
-    /// game is up would be undone the moment the game writes its preferences on exit.
-    /// </summary>
-    public static void RestorePendingSpawnPref()
-    {
-        PendingRestore? note;
-        try
-        {
-            if (!File.Exists(PendingRestorePath)) return;
-            note = Json.ReadFile<PendingRestore>(PendingRestorePath);
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        {
-            return;
-        }
-
-        if (note is null) { ForgetRestore(); return; }
-
-        object? data = note.Number is not null ? note.Number.Value
-                     : note.Text is not null ? note.Text
-                     : note.Base64 is not null ? Convert.FromBase64String(note.Base64)
-                     : null;
-
-        var kind = Enum.TryParse<RegistryValueKind>(note.Kind, out var k) ? k : RegistryValueKind.Unknown;
-        var backup = new SpawnPrefBackup(note.ValueName, data, kind);
-
-        ActivityLog.Write($"a spawn-button setting borrowed at {note.WrittenAt:HH:mm} is still out; "
-                          + "the copy of this program that borrowed it is gone");
-
-        // Putting it back while the game is up would be undone the moment the game writes its
-        // preferences on the way out, so this waits rather than doing it now and being wrong.
-        if (GamePaths.IsGameRunning())
-        {
-            ActivityLog.Write("  the game is still running, so it goes back when the game closes");
-            WaitForGameThenRestore(backup, alreadyStarted: true);
-            return;
-        }
-
-        RestoreSpawnPref(backup);
-        ForgetRestore();
-    }
-
-    /// <summary>Whether this PC is currently set to skip the spawn button. Null when never set.</summary>
     public static bool? SpawnButtonSkipped()
     {
-        var found = BackupSpawnPref();
-        if (found is null || found.WasAbsent) return null;
-
-        return found.Data switch
-        {
-            int i => i != 0,
-            long l => l != 0,
-            string s => s is "1" or "true" or "True",
-            _ => null,
-        };
+        var v = GamePrefsBorrow.CurrentNumber(SkipSpawnPref);
+        return v is null ? null : v != 0;
     }
 
     /// <summary>
-    /// Gives the borrowed setting back unconditionally, whatever state it got left in.
+    /// Gives back every setting a remote launch borrowed, whatever state they got left in.
     ///
     /// The undo for this whole feature, and it exists because the feature needed it for real: a
-    /// launch borrowed the setting, this program was updated and restarted before it could hand it
+    /// launch borrowed a setting, this program was updated and restarted before it could hand it
     /// back, and the machine was left changed with nothing recorded about it. Anything that
-    /// borrows something on somebody else's PC should ship with the button that gives it back.
-    ///
-    /// Deleting rather than writing a zero, because "never set" is what it was, and a value that
-    /// was not there before should not be there afterwards.
+    /// borrows a setting on somebody else's PC should ship with the button that gives it back.
     /// </summary>
-    public static (bool Ok, string Message) GiveBackSpawnPref()
-    {
-        if (GamePaths.IsGameRunning())
-            return (false, "The game is running on this PC. It writes its settings when it closes, "
-                           + "so this would be undone. Close it first.");
+    public static (bool Ok, string Message) GiveBackSpawnPref() => GamePrefsBorrow.GiveBackPending();
 
-        var before = SpawnButtonSkipped();
-        ForgetRestore();
-
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(PrefsKeyPath, writable: true);
-            if (key is null) return (true, "This PC has no game settings to put back.");
-
-            var names = key.GetValueNames()
-                .Where(n => n.StartsWith(SkipSpawnPrefPrefix, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-            foreach (var n in names) key.DeleteValue(n, throwOnMissingValue: false);
-
-            ActivityLog.Write($"gave the spawn-button setting back (it was {Describe(before)})");
-
-            return (true, names.Count == 0
-                ? "It was already how it started - nothing to put back."
-                : $"Put back. The spawn screen behaves as it did before ({Describe(before)} until now).");
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException)
-        {
-            return (false, "Could not put it back: " + e.Message);
-        }
-
-        static string Describe(bool? v) => v switch
-        {
-            true => "set to skip the spawn screen",
-            false => "set to show the spawn screen",
-            _ => "never set",
-        };
-    }
-
-    public static SpawnPrefBackup? BackupSpawnPref()
-    {
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(PrefsKeyPath);
-            if (key is null) return null;
-
-            var name = key.GetValueNames()
-                .FirstOrDefault(n => n.StartsWith(SkipSpawnPrefPrefix, StringComparison.OrdinalIgnoreCase));
-
-            return name is null
-                ? new SpawnPrefBackup(null, null, RegistryValueKind.Unknown)
-                : new SpawnPrefBackup(name, key.GetValue(name), key.GetValueKind(name));
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException)
-        {
-            return null;
-        }
-    }
-
-    /// <summary>Puts the spawn-button preference back exactly as it was found.</summary>
-    public static void RestoreSpawnPref(SpawnPrefBackup? backup)
-    {
-        if (backup is null) return;
-
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(PrefsKeyPath, writable: true);
-            if (key is null) return;
-
-            if (backup.WasAbsent)
-            {
-                foreach (var n in key.GetValueNames()
-                             .Where(n => n.StartsWith(SkipSpawnPrefPrefix, StringComparison.OrdinalIgnoreCase)))
-                {
-                    key.DeleteValue(n, throwOnMissingValue: false);
-                }
-
-                ActivityLog.Write("put the spawn-button setting back to how it was (it had never been set)");
-                return;
-            }
-
-            if (backup.Data is not null) key.SetValue(backup.ValueName!, backup.Data, backup.Kind);
-            ActivityLog.Write("put the spawn-button setting back to how it was");
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException)
-        {
-            ActivityLog.Write("could not put the spawn-button setting back", e);
-        }
-    }
-
-    /// <summary>
-    /// Waits for the game to finish, then puts the borrowed preference back.
-    ///
-    /// Polled rather than waited on, because the process that is started is not always the process
-    /// that ends up running: with EasyAntiCheat on, the executable we start hands over to another
-    /// one, and waiting on our own handle would restore the setting while the game was still
-    /// loading - which would put the spawn screen back in front of a machine nobody is sitting at.
-    ///
-    /// Capped, so a game left running for days does not leave a task waiting for it forever. The
-    /// setting is put back either way.
-    /// </summary>
-    private static void RestoreWhenTheGameFinishes(SpawnPrefBackup? backup)
-        => WaitForGameThenRestore(backup, alreadyStarted: false);
-
-    /// <summary>
-    /// Waits for the game to finish, then puts the borrowed preference back.
-    ///
-    /// <paramref name="alreadyStarted"/> distinguishes the two callers. Just after a launch the
-    /// game has not appeared yet, so "not running" means "not yet" and has to be waited through.
-    /// Picking up somebody else's note at startup, the game is already up, and waiting for it to
-    /// start again would be waiting for something that has already happened.
-    /// </summary>
-    private static void WaitForGameThenRestore(SpawnPrefBackup? backup, bool alreadyStarted)
-    {
-        if (backup is null) return;
-
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                if (!alreadyStarted)
-                {
-                    // Give it room to start: it takes minutes on the slower of these two machines,
-                    // and "not running yet" must not be read as "already finished".
-                    var deadline = DateTimeOffset.UtcNow + TimeSpan.FromMinutes(10);
-                    while (DateTimeOffset.UtcNow < deadline && !GamePaths.IsGameRunning())
-                        await Task.Delay(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
-                }
-
-                var giveUp = DateTimeOffset.UtcNow + TimeSpan.FromHours(16);
-                while (DateTimeOffset.UtcNow < giveUp && GamePaths.IsGameRunning())
-                    await Task.Delay(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
-
-                // The game writes its preferences on the way out, so this has to come after.
-                await Task.Delay(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
-                RestoreSpawnPref(backup);
-                ForgetRestore();
-            }
-            catch (Exception e)
-            {
-                ActivityLog.Write("while waiting to put the spawn-button setting back", e);
-            }
-        });
-    }
+    /// <summary>Picks up a hand-back left behind by a copy of this program that is gone.</summary>
+    public static void RestorePendingSpawnPref() => GamePrefsBorrow.GiveBackOnStartup();
 
     // ------------------------------------------------------------------ doing it
 
@@ -674,7 +425,8 @@ public static class GameLauncher
     /// a mistyped name silently producing a fresh empty world on somebody else's PC is precisely
     /// the class of surprise this program exists to avoid.
     /// </summary>
-    public static Result Start(GameLocation? location, string? world, string? saveName, string askedBy)
+    public static Result Start(
+        GameLocation? location, string? world, string? saveName, string askedBy, string? tune = null)
     {
         if (location is null)
             return new Result(false, "This PC has not worked out where the game is installed yet.");
@@ -692,17 +444,26 @@ public static class GameLauncher
             if (problem is not null) return new Result(false, problem);
         }
 
-        var plan = PlanLaunch(location, installDir, world, saveName);
+        var plan = PlanLaunch(location, installDir, world, saveName, tune);
 
         if (!File.Exists(plan.Exe))
             return new Result(false, $"The game executable is not where it was expected ({plan.Exe}).");
 
         var steamNote = EnsureSteamRunning();
 
-        // Captured before the launch, restored after the game finishes. Only when a save was
-        // asked for: starting the game for somebody to play leaves their settings alone.
-        var spawnPref = string.IsNullOrWhiteSpace(saveName) ? null : BackupSpawnPref();
-        WriteDownRestore(spawnPref);
+        // Captured before the launch and handed back when the game closes. Only what this launch
+        // actually changes: starting the game for somebody to play leaves their settings alone.
+        var borrowing = new List<string>();
+        if (!string.IsNullOrWhiteSpace(saveName)) borrowing.Add(SkipSpawnPref);
+
+        var profile = GameTuning.ByName(tune);
+        if (profile is not null) borrowing.AddRange(GameTuning.PrefNames(profile));
+
+        var borrowed = borrowing.Count == 0
+            ? null
+            : GamePrefsBorrow.Capture(borrowing, profile is null ? "starting a save" : $"starting a save, {tune}");
+
+        GamePrefsBorrow.WriteDown(borrowed);
 
         try
         {
@@ -725,11 +486,14 @@ public static class GameLauncher
             ActivityLog.Write($"  {plan.Basis}");
             ActivityLog.Write($"  {plan.CommandLine}");
 
-            RestoreWhenTheGameFinishes(spawnPref);
+            GamePrefsBorrow.GiveBackWhenTheGameFinishes(borrowed, alreadyStarted: false);
 
             var what = string.IsNullOrWhiteSpace(saveName)
                 ? "Starting the game."
                 : $"Starting the game straight into '{saveName}', past the spawn screen.";
+
+            if (profile is not null)
+                what += $" Borrowing {GameTuning.Describe(profile)}; they go back when the game closes.";
 
             return new Result(true, $"{what} {plan.Basis}.{steamNote} It takes a minute to load.",
                               plan.LogFile, plan.CommandLine);
@@ -738,8 +502,7 @@ public static class GameLauncher
                                   or IOException or UnauthorizedAccessException)
         {
             ActivityLog.Write("could not start the game", e);
-            RestoreSpawnPref(spawnPref);       // nothing started, so nothing to wait for
-            ForgetRestore();
+            GamePrefsBorrow.GiveBack(borrowed);       // nothing started, so nothing to wait for
             return new Result(false, "Could not start it: " + e.Message);
         }
     }

@@ -101,6 +101,9 @@ public sealed class MachineReport
     /// <summary>Which Windows power plan is active. A power-saving plan caps clocks on its own.</summary>
     public string PowerPlan { get; init; } = "";
 
+    /// <summary>Which chip Windows has been told to give the game, when it has been told anything.</summary>
+    public string GpuPreference { get; init; } = "";
+
     public static MachineReport Read(GameLocation? location)
     {
         // One measured window, taken before anything else, so every load figure below describes
@@ -137,6 +140,7 @@ public sealed class MachineReport
             Graphics = SystemLoad.ReadGraphicsSettings(),
             OnBattery = SystemLoad.OnBattery(),
             PowerPlan = SystemLoad.ActivePowerPlan(),
+            GpuPreference = DescribeGpuPreference(location),
         };
     }
 
@@ -187,6 +191,7 @@ public sealed class MachineReport
                                                           : "  -  the game is NOT on it") : ""));
         }
         if (WrongChip() is { } chip) lines.Add("  >> " + chip);
+        if (GpuPreference.Length > 0) lines.Add("Windows is told to give the game: " + GpuPreference);
         if (Nvidia?.Heat() is { } heat) lines.Add(heat);
         if (Nvidia?.HeldBack() is { } held) lines.Add("  >> " + held);
         lines.Add("Power: " + OnBattery switch
@@ -324,6 +329,18 @@ public sealed class MachineReport
             return "EAC is ON in practice, whatever the settings file says.";
 
         return null;
+    }
+
+    /// <summary>Which chip Windows has been told to hand the game, if it has been told at all.</summary>
+    private static string DescribeGpuPreference(GameLocation? location)
+    {
+        var install = GamePaths.ResolveInstall(location?.InstallDir);
+        if (install is null) return "";
+
+        var exe = Path.Combine(install, GamePaths.ProcessName + ".exe");
+        var (choice, raw) = GpuChoice.Current(exe);
+
+        return raw is null ? "not set - left to Windows" : GpuChoice.Describe(choice);
     }
 
     /// <summary>The last launch as one readable line, or nothing when the game has never run here.</summary>

@@ -140,6 +140,16 @@ public sealed class LanRequest
     public string? World { get; set; }
     public string? SaveName { get; set; }
 
+    /// <summary>
+    /// A named settings profile to borrow for this launch, e.g. "lowheat". Null to change nothing.
+    /// </summary>
+    public string? Tune { get; set; }
+
+    /// <summary>
+    /// Which graphics chip to point the game at: integrated, discrete, auto, or back.
+    /// </summary>
+    public string? Gpu { get; set; }
+
     // update-offer: what is being offered, so the far side can refuse before a byte is sent.
     public string? OfferedVersion { get; set; }
     public string? OfferedSha256 { get; set; }

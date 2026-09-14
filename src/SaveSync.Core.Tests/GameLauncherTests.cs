@@ -275,89 +275,168 @@ public class GameLauncherTests : IDisposable
     }
 
     /// <summary>
-    /// The borrowed setting is written down, so it survives this program being restarted.
+    /// A borrowed setting is written down, so it survives this program being restarted.
     ///
-    /// It has to. The restore otherwise lives only in a background task, and this program is
+    /// It has to. The hand-back otherwise lives only in a background task, and this program is
     /// updated and restarted from another machine as a matter of routine - which would leave
-    /// somebody's spawn screen permanently skipped with nothing to explain why.
+    /// somebody's settings changed with nothing to explain why. That is not hypothetical: it
+    /// happened to a real laptop, four minutes after the setting was borrowed.
     /// </summary>
     [Fact]
     public void A_borrowed_setting_is_written_down_and_can_be_read_back()
     {
-        var backup = new GameLauncher.SpawnPrefBackup("SkipSpawnButton_h123", 0, RegistryValueKind.DWord);
+        var note = new GamePrefsBorrow.Note
+        {
+            Reason = "test",
+            Items =
+            {
+                new GamePrefsBorrow.Borrowed
+                {
+                    Name = "SkipSpawnButton",
+                    ValueName = "SkipSpawnButton_h123",
+                    Kind = "DWord",
+                    Number = 0,
+                },
+            },
+        };
 
-        GameLauncher.WriteDownRestore(backup);
+        GamePrefsBorrow.WriteDown(note);
         try
         {
-            Assert.True(File.Exists(GameLauncher.PendingRestorePath));
+            var back = GamePrefsBorrow.ReadNote();
 
-            var note = Json.ReadFile<GameLauncher.PendingRestore>(GameLauncher.PendingRestorePath);
-            Assert.NotNull(note);
-            Assert.Equal("SkipSpawnButton_h123", note!.ValueName);
-            Assert.Equal(0, note.Number);
-            Assert.Equal("DWord", note.Kind);
+            Assert.NotNull(back);
+            Assert.Single(back!.Items);
+            Assert.Equal("SkipSpawnButton", back.Items[0].Name);
+            Assert.Equal(0, back.Items[0].Number);
+            Assert.False(back.Items[0].WasAbsent);
         }
-        finally { GameLauncher.ForgetRestore(); }
+        finally { GamePrefsBorrow.Forget(); }
     }
 
     /// <summary>
     /// "It was never set" is a state worth recording, and the common one.
     ///
-    /// Neither of these two machines has ever written that preference, so restoring it means
-    /// deleting what the game wrote - not writing a zero, which would leave a value behind that
-    /// was not there before.
+    /// Neither of these two machines had ever written the spawn preference, so giving it back
+    /// means deleting what the game wrote - not writing a zero, which would leave a value behind
+    /// that was not there before.
     /// </summary>
     [Fact]
     public void A_setting_that_was_never_there_is_written_down_as_absent()
     {
-        GameLauncher.WriteDownRestore(
-            new GameLauncher.SpawnPrefBackup(null, null, RegistryValueKind.Unknown));
+        var note = new GamePrefsBorrow.Note
+        {
+            Items = { new GamePrefsBorrow.Borrowed { Name = "OptionsGfxViewDistance" } },
+        };
+
+        GamePrefsBorrow.WriteDown(note);
         try
         {
-            var note = Json.ReadFile<GameLauncher.PendingRestore>(GameLauncher.PendingRestorePath);
-            Assert.NotNull(note);
-            Assert.Null(note!.ValueName);
-            Assert.Null(note.Number);
+            var back = GamePrefsBorrow.ReadNote();
+
+            Assert.NotNull(back);
+            Assert.True(back!.Items[0].WasAbsent);
+            Assert.Null(back.Items[0].Number);
         }
-        finally { GameLauncher.ForgetRestore(); }
+        finally { GamePrefsBorrow.Forget(); }
     }
 
     /// <summary>Nothing borrowed, nothing written down.</summary>
     [Fact]
     public void Nothing_is_written_down_when_nothing_was_borrowed()
     {
-        GameLauncher.ForgetRestore();
-        GameLauncher.WriteDownRestore(null);
-        Assert.False(File.Exists(GameLauncher.PendingRestorePath));
+        GamePrefsBorrow.Forget();
+        GamePrefsBorrow.WriteDown(null);
+        GamePrefsBorrow.WriteDown(new GamePrefsBorrow.Note());
+
+        Assert.False(File.Exists(GamePrefsBorrow.NotePath));
+    }
+
+    /// <summary>Settings are never handed back underneath a running game, which would undo it.</summary>
+    [Fact]
+    public void Nothing_is_given_back_while_the_game_is_running()
+    {
+        if (!GamePaths.IsGameRunning()) return;   // only meaningful when it actually is
+
+        var note = new GamePrefsBorrow.Note
+        {
+            Items = { new GamePrefsBorrow.Borrowed { Name = "OptionsGfxViewDistance" } },
+        };
+
+        var (ok, message) = GamePrefsBorrow.GiveBack(note);
+
+        Assert.False(ok);
+        Assert.Contains("running", message);
+    }
+
+    // ---------------------------------------------------------------- settings for a hot machine
+
+    /// <summary>
+    /// The low-heat profile reaches the game as arguments it actually understands.
+    ///
+    /// Applied on the command line rather than written to the registry because a preference that
+    /// has never been set has no registry value to write - Unity names them with a hash that
+    /// cannot be derived.
+    /// </summary>
+    [Fact]
+    public void The_low_heat_profile_goes_on_the_command_line()
+    {
+        WriteSave("Navezgane", "Chris Main Save");
+        WriteLauncherLog(Path.Combine(_install, "7DaysToDie.exe"));
+
+        var plan = GameLauncher.PlanLaunch(
+            Location(), _install, "Navezgane", "Chris Main Save", GameTuning.LowHeat);
+
+        Assert.Contains("-OptionsGfxDynamicScale=0.5", plan.Arguments);
+        Assert.Contains("-OptionsGfxUpscalerMode=4", plan.Arguments);
+        Assert.Contains("-OptionsGfxLimitFpsInGame=30", plan.Arguments);
     }
 
     /// <summary>
-    /// A launch describes itself by what it does, not by what a settings file claims.
+    /// Texture quality runs BACKWARDS, and the profile has to follow the game rather than sense.
     ///
-    /// Both real machines here have a launchersettings.json saying EasyAntiCheat is on while every
-    /// actual launch carries -noeac, so describing launches by the settings file reported "EAC ON"
-    /// about two PCs running without it - confidently, and in every message.
+    /// The game's own preset table reads { 3, 2, 1, 0, 0 } from lowest to highest, so 3 is the
+    /// cheapest setting. A profile built on the obvious assumption would have turned the textures
+    /// up on a machine that cannot cool itself.
     /// </summary>
     [Fact]
-    public void A_repeated_launch_reports_the_EAC_it_actually_uses_not_the_one_on_file()
+    public void Texture_quality_is_taken_from_the_games_table_not_from_intuition()
     {
-        WriteLauncherSettings(useEac: true);        // the file says on...
-        WriteLauncherLog(Path.Combine(_install, "7DaysToDie.exe"), "-force-d3d11", "-noeac");   // ...reality says off
-
-        var plan = GameLauncher.PlanLaunch(Location(), _install, null, null);
-
-        Assert.Contains("EAC off", plan.Basis);
-        Assert.DoesNotContain("EAC ON", plan.Basis);
+        var texture = GameTuning.LowHeatProfile.Single(s => s.Pref == "OptionsGfxTexQuality");
+        Assert.Equal("3", texture.Value);
     }
 
+    /// <summary>No profile asked for, nothing changed. Somebody sitting there keeps their settings.</summary>
     [Fact]
-    public void A_launch_that_really_uses_EAC_says_so()
+    public void No_graphics_settings_are_touched_without_a_profile()
     {
-        WriteLauncherLog(Path.Combine(_install, "7DaysToDie_EAC.exe"), "-force-d3d11");
+        WriteSave("Navezgane", "Chris Main Save");
+        WriteLauncherLog(Path.Combine(_install, "7DaysToDie.exe"));
 
-        var plan = GameLauncher.PlanLaunch(Location(), _install, null, null);
+        var plan = GameLauncher.PlanLaunch(Location(), _install, "Navezgane", "Chris Main Save");
 
-        Assert.Contains("EAC ON", plan.Basis);
+        Assert.DoesNotContain(plan.Arguments,
+                              a => a.StartsWith("-OptionsGfx", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>An unknown profile name changes nothing rather than guessing at what was meant.</summary>
+    [Fact]
+    public void An_unknown_profile_name_changes_nothing()
+    {
+        Assert.Null(GameTuning.ByName("blazingfast"));
+        Assert.Null(GameTuning.ByName(null));
+    }
+
+    /// <summary>Every setting in the profile is one the game will accept as a preference name.</summary>
+    [Fact]
+    public void Every_setting_in_the_profile_is_named_like_a_game_preference()
+    {
+        Assert.All(GameTuning.LowHeatProfile, s =>
+        {
+            Assert.StartsWith("Options", s.Pref);
+            Assert.False(string.IsNullOrWhiteSpace(s.Value));
+            Assert.False(string.IsNullOrWhiteSpace(s.Why));
+        });
     }
 
     // ---------------------------------------------------------------- the guard

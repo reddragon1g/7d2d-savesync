@@ -13,6 +13,7 @@ using SaveSync.Core;
 //   probe launch   [world] [saveName]               - start the game HERE, in that save
 //   probe launchplan [world] [saveName]             - print what a launch would run, start nothing
 //   probe spawnreset [seconds] [who]                - give back the borrowed spawn-screen setting
+//   probe gpu <integrated|discrete|auto|back> [who] - which chip Windows gives the game
 //   probe here                                      - the full machine report for THIS PC
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
@@ -47,13 +48,14 @@ try
         case "restart": RestartPeer(int.TryParse(Arg(1), out var rw) ? rw : 8, Arg(2)); break;
         case "peersaves": PeerSaves(int.TryParse(Arg(1), out var sw) ? sw : 8, Arg(2)); break;
         case "machine": PeerMachine(int.TryParse(Arg(1), out var mw) ? mw : 8, Arg(2)); break;
-        case "game": Game_(At(1), Arg(2), Arg(3), Arg(4)); break;
+        case "game": Game_(At(1), Arg(2), Arg(3), Arg(4), Arg(5)); break;
         case "rename": RenamePeerSave(At(1), At(2), At(3), At(4)); break;
         case "keepboth": KeepBoth(int.TryParse(Arg(1), out var kw) ? kw : 8, At(2), At(3), Arg(4)); break;
         case "import": Import(At(1), At(2), Arg(3) ?? "apply"); break;
         case "launch": Launch(Arg(1), Arg(2), dryRun: false); break;
         case "launchplan": Launch(Arg(1), Arg(2), dryRun: true); break;
         case "spawnreset": SpawnReset(int.TryParse(Arg(1), out var zw) ? zw : 8, Arg(2)); break;
+        case "gpu": GpuPick(At(1), Arg(2)); break;
         case "here": Console.WriteLine(MachineReport.Read(GamePaths.Discover()).Describe()); break;
         default:
             Console.WriteLine($"unknown command: {cmd}");
@@ -271,11 +273,11 @@ void Relay(string userData, string fromName, string toName, string world, string
 /// Starts or closes the game on another PC.
 ///
 ///   game stop  [who]
-///   game start [who] [world] [save name]
+///   game start [who] [world] [save name] [lowheat]
 ///
 /// With a world and a save it goes straight in; without them it comes up at the menu.
 /// </summary>
-void Game_(string startOrStop, string? which, string? world, string? saveName)
+void Game_(string startOrStop, string? which, string? world, string? saveName, string? tune)
 {
     bool start = startOrStop.Equals("start", StringComparison.OrdinalIgnoreCase);
     var config = AppConfig.Load();
@@ -292,7 +294,7 @@ void Game_(string startOrStop, string? which, string? world, string? saveName)
     var client = new SaveSync.Core.Lan.LanClient(config);
     foreach (var peer in peers)
     {
-        var r = client.GameAsync(peer, start, "probe", default, world, saveName).GetAwaiter().GetResult();
+        var r = client.GameAsync(peer, start, "probe", default, world, saveName, tune).GetAwaiter().GetResult();
         Console.WriteLine($"  {peer.DisplayName,-18} {(r.Ok ? "OK" : "refused")} - {r.Message}");
     }
 }
@@ -465,6 +467,33 @@ void Kinship(string saveA, string saveB)
     Console.WriteLine($"VERDICT: {v.Kind}");
     Console.WriteLine($"  {v.Headline}");
     foreach (var r in v.Reasons) Console.WriteLine($"    - {r}");
+}
+
+/// <summary>
+/// Points another PC's game at the built-in chip or the discrete card.
+///
+/// Open question on a laptop whose card has lost its fan: a crippled discrete card keeps its own
+/// fast memory, an integrated one is slow but is not throttled. Only measuring settles it.
+/// </summary>
+void GpuPick(string which, string? who)
+{
+    var config = AppConfig.Load();
+    using var discovery = new SaveSync.Core.Lan.Discovery(config) { PersonName = "probe" };
+    discovery.Start();
+    Thread.Sleep(TimeSpan.FromSeconds(10));
+
+    var peers = discovery.Peers
+        .Where(p => who is null || p.DisplayName.Contains(who, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    if (peers.Count == 0) { Console.WriteLine("no other PC answered."); return; }
+
+    var client = new SaveSync.Core.Lan.LanClient(config);
+    foreach (var peer in peers)
+    {
+        var r = client.GpuChoiceAsync(peer, which, "probe").GetAwaiter().GetResult();
+        Console.WriteLine($"  {peer.DisplayName,-18} {(r.Ok ? "OK" : "refused")} - {r.Message}");
+    }
 }
 
 /// <summary>

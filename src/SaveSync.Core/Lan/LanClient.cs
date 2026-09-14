@@ -293,10 +293,10 @@ public sealed class LanClient
     /// </summary>
     public async Task<(bool Ok, string Message)> GameAsync(
         LanPeer peer, bool start, string senderName, CancellationToken ct = default,
-        string? world = null, string? saveName = null)
+        string? world = null, string? saveName = null, string? tune = null)
     {
         var response = await SimpleAsync(peer, start ? "game-start" : "game-stop", senderName, null, null, ct,
-                                         world, saveName)
+                                         world, saveName, tune)
             .ConfigureAwait(false);
 
         if (response is null) return (false, $"{peer.Label} did not answer.");
@@ -308,6 +308,17 @@ public sealed class LanClient
         LanPeer peer, string senderName, CancellationToken ct = default)
     {
         var response = await SimpleAsync(peer, "spawn-pref-reset", senderName, null, null, ct)
+            .ConfigureAwait(false);
+
+        if (response is null) return (false, $"{peer.Label} did not answer.");
+        return (response.Ok, response.Ok ? response.Message ?? "Done." : response.Error ?? "Refused.");
+    }
+
+    /// <summary>Points another PC's game at one graphics chip or the other.</summary>
+    public async Task<(bool Ok, string Message)> GpuChoiceAsync(
+        LanPeer peer, string which, string senderName, CancellationToken ct = default)
+    {
+        var response = await SimpleAsync(peer, "gpu-choice", senderName, null, null, ct, gpu: which)
             .ConfigureAwait(false);
 
         if (response is null) return (false, $"{peer.Label} did not answer.");
@@ -349,7 +360,7 @@ public sealed class LanClient
     /// <summary>One request, one answer, no body. Shared by the small operations.</summary>
     private async Task<LanResponse?> SimpleAsync(
         LanPeer peer, string op, string senderName, string? inboxId, string? installAs, CancellationToken ct,
-        string? world = null, string? saveName = null)
+        string? world = null, string? saveName = null, string? tune = null, string? gpu = null)
     {
         if (!await EnsurePairedAsync(peer, senderName, ct).ConfigureAwait(false)) return null;
         var secret = _config.FindPeer(peer.MachineId)?.Secret;
@@ -371,6 +382,8 @@ public sealed class LanClient
                 InstallAsName = installAs,
                 World = world,
                 SaveName = saveName,
+                Tune = tune,
+                Gpu = gpu,
             }, ct: ct).ConfigureAwait(false);
 
             return await LanProtocol.ReadHeaderAsync<LanResponse>(stream, ct).ConfigureAwait(false);

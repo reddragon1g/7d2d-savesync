@@ -21,7 +21,7 @@ Windows will say "Windows protected your PC" the first time, because the program
 ## Build
 
 ```
-dotnet test src/SaveSync.Core.Tests/SaveSync.Core.Tests.csproj      # 218 tests
+dotnet test src/SaveSync.Core.Tests/SaveSync.Core.Tests.csproj      # 222 tests
 dotnet publish src/SaveSync.App/SaveSync.App.csproj -c Release -o dist
 ```
 
@@ -128,7 +128,8 @@ rest of it, and none of them needs a person at the far end to click anything:
 | `update-offer` / `update-file` | A newer program, checked against a checksum declared before a byte is sent |
 | `game-stop` | Asks the game to close. Asked, never killed - it writes the world on the way out |
 | `game-start` | Starts the game, optionally **straight into a named save**, past the spawn screen |
-| `spawn-pref-reset` | Hands back the one setting a remote launch borrows |
+| `spawn-pref-reset` | Hands back every setting a remote launch borrows |
+| `gpu-choice` | Points the game at the built-in chip or the discrete card, reversibly |
 
 ### Answering "why is it running badly" from another PC
 
@@ -315,7 +316,7 @@ src/SaveSync.Core/Mods.cs discovery, comparison and install of mod folders
 src/SaveSync.Core/Lan/    network: framing, server, client, discovery, peer comparison
 src/SaveSync.Core/GameLauncher.cs  starting the game, and a named save, from another PC
 src/SaveSync.Watchdog/    tiny keep-alive process, reachable when the main one is not
-src/SaveSync.Core.Tests/  218 tests: synthetic saves and mods, plus real TCP transfers on loopback
+src/SaveSync.Core.Tests/  222 tests: synthetic saves and mods, plus real TCP transfers on loopback
 src/SaveSync.App/         WinForms UI (dark, 7DTD-styled), single screen, two buttons
 tools/SaveSync.Probe/     dev CLI to drive the engine headlessly
 docs/quick-start.html     printable instructions for the end users
