@@ -61,6 +61,18 @@ public static class GpuPulse
                 "",
             };
 
+            // The temperature series, because how fast a card SHEDS heat once the load stops is
+            // the one measurement that tells you whether anything is moving air over it - and it
+            // does not depend on the driver being willing to report a fan speed at all.
+            if (temps.Count > 4 && temps[0] != temps[^1])
+            {
+                var span = Readings[^1].Seconds - Readings[0].Seconds;
+                var change = temps[^1] - temps[0];
+                lines.Add($"  temperature went {temps[0]}C -> {temps[^1]}C over {span:0.0}s "
+                          + $"({change * 60.0 / Math.Max(1, span):+0.0;-0.0} C per minute)");
+                lines.Add("");
+            }
+
             if (PeriodSeconds > 0 && Strength >= 0.3)
             {
                 lines.Add($">> The card's speed RISES AND FALLS on a cycle of about "
@@ -84,6 +96,9 @@ public static class GpuPulse
             lines.Add("");
             lines.Add("clock MHz, one per reading:");
             lines.Add("  " + string.Join(" ", clocks));
+            lines.Add("");
+            lines.Add("temperature C, one per reading:");
+            lines.Add("  " + string.Join(" ", temps));
 
             return string.Join(Environment.NewLine, lines);
         }

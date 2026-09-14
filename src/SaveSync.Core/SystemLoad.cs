@@ -190,6 +190,16 @@ public static class SystemLoad
         public int MaxOperatingTempC { get; init; } = -1;
         public int MemoryTempC { get; init; } = -1;
 
+        /// <summary>
+        /// Fan speed as the driver reports it. -1 when it will not say.
+        ///
+        /// A laptop's graphics fan is often driven by the machine's embedded controller rather
+        /// than by the card, and in that case the driver genuinely does not know - so "not
+        /// reported" has to stay distinct from "zero", because reading the first as the second
+        /// would convict a working fan on no evidence.
+        /// </summary>
+        public int FanPercent { get; init; } = -1;
+
         public string? Heat()
         {
             if (TemperatureC < 0) return null;
@@ -202,6 +212,19 @@ public static class SystemLoad
             if (ShutdownTempC > 0) parts.Add($"shuts down at {ShutdownTempC}C");
 
             var line = "Temperatures: " + string.Join(", ", parts);
+
+            line += Environment.NewLine + "  Fan: " + FanPercent switch
+            {
+                < 0 => "the driver will not say (common on laptops, where the machine drives the "
+                       + "fan rather than the card) - judge it by how fast it cools instead",
+                0 => "reported as NOT SPINNING",
+                _ => $"reported as spinning at {FanPercent}%",
+            };
+
+            if (FanPercent == 0 && TemperatureC >= 70)
+                line += Environment.NewLine
+                        + $"  >> A fan at 0% while the card sits at {TemperatureC}C is not a fan "
+                        + "idling. Nothing is moving air over it.";
 
             if (TargetTempC > 0 && TemperatureC >= TargetTempC - 2)
                 line += Environment.NewLine
@@ -272,7 +295,7 @@ public static class SystemLoad
 
         var summary = RunSmi(exe,
             "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,"
-            + "clocks.current.graphics,clocks.max.graphics,power.draw,power.limit"
+            + "clocks.current.graphics,clocks.max.graphics,power.draw,power.limit,fan.speed"
             + " --format=csv,noheader,nounits");
         if (summary is null) return null;
 
@@ -296,6 +319,7 @@ public static class SystemLoad
             ClockMaxMhz = parts.Length > 6 ? Int(parts[6], -1) : -1,
             PowerWatts = parts.Length > 7 ? Real(parts[7], -1) : -1,
             PowerLimitWatts = parts.Length > 8 ? Real(parts[8], -1) : -1,
+            FanPercent = parts.Length > 9 ? Int(parts[9], -1) : -1,
             Throttling = ReadThrottleReasons(exe),
             TargetTempC = temps.GetValueOrDefault("GPU Target Temperature", -1),
             SlowdownTempC = temps.GetValueOrDefault("GPU Slowdown Temp", -1),
