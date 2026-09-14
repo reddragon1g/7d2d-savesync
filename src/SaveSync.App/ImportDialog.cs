@@ -116,8 +116,9 @@ public sealed class ImportDialog : Form
             if (plan.Local is not null)
             {
                 _keepBoth = new ChoiceRow(
-                    "Keep both - install it under a different name",
-                    "Nothing on this PC is touched. The incoming save is added beside it.");
+                    "Keep both - install it under a different name  (safest)",
+                    "Nothing on this PC is touched at all. The incoming save is added next to it "
+                    + "under the name below, and you can delete either one later.");
                 _keepBoth.SetBounds(PadX, y, inner, ChoiceRow.FixedHeight);
                 Controls.Add(_keepBoth);
                 y += ChoiceRow.FixedHeight + 6;
@@ -138,12 +139,13 @@ public sealed class ImportDialog : Form
 
             y += 4;
 
-            // When the two are provably different games, the answer is almost always "keep both",
-            // so that is the one already chosen. Nothing destructive is ever pre-selected: somebody
-            // clicking straight through without reading must land on the outcome that loses
-            // nothing, not on the one that replaces a world.
-            if (_keepBoth is not null && plan.Kinship?.ProvenDifferent == true)
-                _keepBoth.Checked = true;
+            // "Keep both" is always the one already chosen, whenever it is available at all.
+            //
+            // It is the only option that cannot lose anything, so it is the only one safe to put
+            // under a pointer that is already moving. It also means nobody has to know in advance
+            // whether the other PC has a save by that name - the answer is the same either way,
+            // and a spare copy is a tidying-up job rather than a disaster.
+            if (_keepBoth is not null) _keepBoth.Checked = true;
 
             _takeIncoming.Chosen += (_, _) => { _keepLocal.Checked = false; if (_keepBoth is not null) _keepBoth.Checked = false; UpdateGo(); };
             _keepLocal.Chosen += (_, _) => { _takeIncoming.Checked = false; if (_keepBoth is not null) _keepBoth.Checked = false; UpdateGo(); };

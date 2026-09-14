@@ -889,4 +889,61 @@ public class TransferTests : IDisposable
         Assert.True(plan.Kinship!.ProvenDifferent);
         Assert.Contains(plan.Kinship.Reasons, r => r.Contains("not even the same world"));
     }
+
+    [Fact]
+    public void Keeping_both_leaves_the_world_folder_alone()
+    {
+        // The rename must only ever change the save's name. The world folder above it is what ties
+        // a save to its map data, and moving a save out of it produces one that will not load.
+        _desktop.MakeGeneratedWorld("Befedite County");
+        _desktop.MakeSave(world: "Befedite County", saveName: "Ariels World");
+        _laptop.MakeGeneratedWorld("Befedite County");
+        _laptop.MakeSave(world: "Befedite County", saveName: "Ariels World", seed: 42);
+
+        var pkg = _desktop.NewEngine().Export(
+            _desktop.Slot(world: "Befedite County", saveName: "Ariels World"), _stick).PackageDir;
+
+        var engine = _laptop.NewEngine();
+        var plan = engine.Inspect(pkg);
+        plan.InstallAsName = "Ariels World (from Chris)";
+
+        Assert.Equal(
+            Path.GetDirectoryName(plan.TargetFolder),
+            Path.GetDirectoryName(plan.EffectiveTargetFolder));
+
+        engine.Import(plan, ImportChoice.InstallAsNewSave);
+
+        // Both saves, both still inside the same world folder.
+        var worldDir = Path.Combine(_laptop.Location.SavesDir, "Befedite County");
+        Assert.True(Directory.Exists(Path.Combine(worldDir, "Ariels World")));
+        Assert.True(Directory.Exists(Path.Combine(worldDir, "Ariels World (from Chris)")));
+
+        // And the map data they both depend on is untouched.
+        Assert.True(File.Exists(Path.Combine(
+            _laptop.Location.GeneratedWorldsDir, "Befedite County", "map_info.xml")));
+    }
+
+    [Fact]
+    public void A_renamed_save_is_a_real_save_the_game_can_load()
+    {
+        // A rename that produced something the game would not list is worse than no rename at all.
+        _desktop.MakeSave(saveName: "My Game");
+        _laptop.MakeSave(saveName: "My Game", seed: 42);
+
+        var pkg = _desktop.NewEngine().Export(_desktop.Slot(saveName: "My Game"), _stick).PackageDir;
+
+        var engine = _laptop.NewEngine();
+        var plan = engine.Inspect(pkg);
+        plan.InstallAsName = "My Game (from Chris)";
+        engine.Import(plan, ImportChoice.InstallAsNewSave);
+
+        var added = SaveDiscovery.Find(_laptop.Location, "Navezgane", "My Game (from Chris)");
+        Assert.NotNull(added);
+
+        // Everything the game needs, including every character.
+        Assert.True(File.Exists(Path.Combine(added!.Folder, "main.ttw")));
+        Assert.True(File.Exists(Path.Combine(added.Folder, "players.xml")));
+        Assert.Equal(TestEnv.PlayerIds.Length,
+            Directory.GetFiles(Path.Combine(added.Folder, "Player"), "*.ttp").Length);
+    }
 }
