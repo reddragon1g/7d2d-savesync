@@ -788,6 +788,19 @@ public sealed class MainForm : Form
             });
         }
 
+        // ---- installed, but with no visible way to start it ----
+        if (Installer.IsInstalled && !Installer.HasShortcut)
+        {
+            _notices.Controls.Add(new Banner(Severity.Warning,
+                "This PC has no shortcut for the program",
+                "It is installed and it runs in the background, but there is nothing to click to "
+                + $"open it. It lives at {Installer.InstalledExe}",
+                ("Put a shortcut on the desktop", MakeShortcutNow))
+            {
+                Width = ClientSize.Width - PadX * 2 - 6,
+            });
+        }
+
         // ---- the one permission that pairing never grants on its own ----
         if (_config.UseNetwork && FirewallSetup.IsConfigured() && Installer.IsInstalled && !_config.AllowRemoteUpdate)
         {
@@ -1054,6 +1067,26 @@ public sealed class MainForm : Form
             Dialogs.Error(this, "Could not update this PC",
                 ex.Message + Environment.NewLine + Environment.NewLine
                 + "The older version is still installed and still works.");
+        }
+
+        Rebuild();
+    }
+
+    private void MakeShortcutNow()
+    {
+        try
+        {
+            Installer.CreateShortcutsNow();
+
+            Dialogs.Info(this, Installer.HasShortcut ? "Done" : "Could not make one",
+                Installer.HasShortcut
+                    ? "There is now a shortcut on the desktop and in the Start Menu."
+                    : "Windows would not let a shortcut be created. You can still start the program "
+                      + "from:" + Environment.NewLine + Environment.NewLine + Installer.InstalledExe);
+        }
+        catch (Exception ex)
+        {
+            Dialogs.Error(this, "Could not make a shortcut", ex.Message);
         }
 
         Rebuild();

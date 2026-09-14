@@ -157,15 +157,18 @@ public static class Installer
             File.Copy(source, InstalledExe, overwrite: true);
 
         SetStartWithWindows(true);
-        CreateStartMenuShortcut();
+        CreateShortcuts();
     }
 
     public static void Uninstall()
     {
         SetStartWithWindows(false);
 
-        try { File.Delete(StartMenuShortcut); } catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        foreach (var link in new[] { StartMenuShortcut, DesktopShortcut })
+        {
+            try { File.Delete(link); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
 
         // The executable itself is left alone: it may be the process running this very code.
     }
@@ -186,21 +189,45 @@ public static class Installer
         }
     }
 
-    private static string StartMenuShortcut => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.Programs),
-        "7 Days to Die Save Transfer.lnk");
+    public const string ShortcutName = "7 Days to Die Save Transfer.lnk";
+
+    public static string StartMenuShortcut => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.Programs), ShortcutName);
+
+    public static string DesktopShortcut => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), ShortcutName);
+
+    /// <summary>True when there is some visible way to start the installed copy.</summary>
+    public static bool HasShortcut => File.Exists(StartMenuShortcut) || File.Exists(DesktopShortcut);
 
     /// <summary>
-    /// Creates the Start Menu entry via a one-line script, so there is no COM interop dependency
-    /// to go wrong inside a single-file build.
+    /// Puts the program somewhere a person can actually find it - the Start Menu AND the Desktop.
+    ///
+    /// Start Menu alone was not enough in practice: on two real machines no entry appeared, the
+    /// failure was swallowed as "cosmetic", and the result was an installed program with no visible
+    /// way to start it at all. A shortcut is not cosmetic when it is the only door.
     /// </summary>
-    private static void CreateStartMenuShortcut()
+    /// <summary>Makes the shortcuts on demand, for a PC that ended up without one.</summary>
+    public static void CreateShortcutsNow() => CreateShortcuts();
+
+    private static void CreateShortcuts()
+    {
+        MakeShortcut(StartMenuShortcut);
+        MakeShortcut(DesktopShortcut);
+
+        ActivityLog.Write(HasShortcut
+            ? $"shortcuts made (start menu: {File.Exists(StartMenuShortcut)}, desktop: {File.Exists(DesktopShortcut)})"
+            : $"NO shortcut could be made - the program can still be started from {InstalledExe}");
+    }
+
+    private static void MakeShortcut(string linkPath)
     {
         try
         {
-            var script = Path.Combine(Path.GetTempPath(), "savesync-shortcut.ps1");
+            var script = Path.Combine(Path.GetTempPath(),
+                "savesync-shortcut-" + Guid.NewGuid().ToString("N")[..6] + ".ps1");
             File.WriteAllText(script,
-                "$s = (New-Object -ComObject WScript.Shell).CreateShortcut('" + StartMenuShortcut + "')\n" +
+                "$s = (New-Object -ComObject WScript.Shell).CreateShortcut('" + linkPath + "')\n" +
                 "$s.TargetPath = '" + InstalledExe + "'\n" +
                 "$s.WorkingDirectory = '" + InstallDir + "'\n" +
                 "$s.Description = '7 Days to Die Save Transfer'\n" +
@@ -220,7 +247,7 @@ public static class Installer
         catch (Exception e) when (e is IOException or UnauthorizedAccessException
                                   or System.ComponentModel.Win32Exception or InvalidOperationException)
         {
-            // A missing Start Menu entry is cosmetic.
+            ActivityLog.Write($"could not create the shortcut at {linkPath}", e);
         }
     }
 
