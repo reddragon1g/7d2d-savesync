@@ -724,6 +724,24 @@ public sealed class MainForm : Form
             });
         }
 
+        // ---- offer to update an older copy already installed here ----
+        //
+        // This used to happen only when the older copy was already running and holding the
+        // single-instance slot. If it happened not to be running, the newer copy started
+        // normally from the stick and never said a word - so the PC quietly kept its old
+        // version, and the person carrying the stick around had no way to know.
+        if (Installer.IsInstalled && Installer.InstalledIsOlder && !Installer.RunningInstalled)
+        {
+            _notices.Controls.Add(new Banner(Severity.Info,
+                $"This PC has an older version ({Installer.InstalledVersion})",
+                $"The copy on this stick is newer ({Installer.ThisVersion}). Updating takes a "
+                + "second and changes nothing about your saves, backups or settings.",
+                ("Update this PC", UpdateInstalled))
+            {
+                Width = ClientSize.Width - PadX * 2 - 6,
+            });
+        }
+
         // ---- offer installing, when running from the stick ----
         if (!Installer.IsInstalled && !Installer.RunningInstalled)
         {
@@ -775,11 +793,30 @@ public sealed class MainForm : Form
         if (waiting.Count > 0 || conflicts > 0)
         {
             int total = Math.Max(conflicts, waiting.Count);
+
+            // Name them, and give the reason that actually applies. This said "both sides were
+            // played since they last matched" whatever the cause - which is one specific case, and
+            // simply untrue of the commonest one, a save that merely shares a name. Somebody read
+            // that, could not match it to anything they had done, and had no idea what was wanted.
+            var names = (_plan?.Conflicts.Select(c => c.Display) ?? Enumerable.Empty<string>())
+                .Concat(waiting.Select(w => w.Display))
+                .Distinct()
+                .ToList();
+
+            var which = names.Count == 0 ? ""
+                : names.Count <= 3 ? string.Join(", ", names)
+                : $"{names[0]}, {names[1]} and {names.Count - 2} more";
+
             _notices.Controls.Add(new Banner(Severity.Warning,
-                total == 1 ? "One save needs you to choose" : $"{total} saves need you to choose",
-                "Both sides were played since they last matched, so they cannot be combined. "
-                + "Nothing changes until you pick one.",
-                ("Sort it out", ReviewConflicts))
+                total == 1
+                    ? $"Waiting for you: {(which.Length > 0 ? which : "one save")}"
+                    : $"Waiting for you: {total} saves",
+                (which.Length > 0 && total > 1 ? which + ". " : "")
+                + "This PC already has a save with the same name, so nothing has been touched. "
+                + "The usual answer is to keep both - yours stays exactly as it is and the incoming "
+                + "one is added next to it under a different name. Nothing is replaced unless you "
+                + "say so.",
+                ("Show me what to do", ReviewConflicts))
             {
                 Width = ClientSize.Width - PadX * 2 - 6,
             });
@@ -852,6 +889,36 @@ public sealed class MainForm : Form
     }
 
     // ------------------------------------------------------------------ actions
+
+    /// <summary>Replaces an older installed copy with the one running now.</summary>
+    private void UpdateInstalled()
+    {
+        if (!Dialogs.Confirm(this, "Update this PC",
+                $"Replace the version installed on this PC ({Installer.InstalledVersion}) with this "
+                + $"one ({Installer.ThisVersion})?"
+                + Environment.NewLine + Environment.NewLine
+                + "Your saves, your backups and your settings are not touched - only the program "
+                + "itself changes. If the old one is running in the background it will be closed "
+                + "and the new one started in its place.",
+                "Update it"))
+            return;
+
+        try
+        {
+            WorkDialog.Run(this, "Updating", "Replacing the installed copy...", (_, _) => Installer.Install());
+
+            Dialogs.Info(this, "Updated",
+                $"This PC is now on {Installer.ThisVersion}. Everything else is exactly as it was.");
+        }
+        catch (Exception ex)
+        {
+            Dialogs.Error(this, "Could not update this PC",
+                ex.Message + Environment.NewLine + Environment.NewLine
+                + "The older version is still installed and still works.");
+        }
+
+        Rebuild();
+    }
 
     private void TurnOnAutoSync()
     {

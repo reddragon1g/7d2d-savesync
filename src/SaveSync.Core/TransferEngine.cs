@@ -747,13 +747,17 @@ public sealed class TransferEngine
 
             if (choice == ImportChoice.InstallAsNewSave)
             {
-                // A fresh identity, not the incoming one. From here these are two separate saves
-                // with separate futures; sharing an id would make every later comparison between
-                // them answer about the wrong save.
-                applied.SaveId = Ids.NewSaveId();
-                applied.VersionId = Ids.NewVersionId();
-                applied.Chain = new List<string>();
-                applied.Ordinal = 1;
+                // Only the NAME changes. The identity and the whole history come with it.
+                //
+                // This is the difference between a name clash being a one-time nuisance and a
+                // permanent one. A renamed copy that was given a fresh id would never be found
+                // again: the next version from the other PC still carries the original id, would
+                // fail to match, would fall back to matching on the name - and land right back on
+                // the untouched save it was renamed to avoid. Somebody would be asked the same
+                // question after every single transfer, forever.
+                //
+                // Keeping the id means the next version goes straight to this folder with nothing
+                // to decide, which is the entire point: after being asked once, never again.
                 applied.SaveName = PathUtil.Sanitize(plan.InstallAsName!);
             }
 

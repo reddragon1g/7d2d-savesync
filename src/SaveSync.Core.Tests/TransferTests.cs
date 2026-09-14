@@ -691,10 +691,11 @@ public class TransferTests : IDisposable
     }
 
     [Fact]
-    public void A_save_kept_alongside_gets_its_own_identity_not_a_shared_one()
+    public void A_save_kept_alongside_keeps_the_identity_it_arrived_with()
     {
-        // Sharing an id would make every later comparison between the two answer about the wrong
-        // save - the incoming copy's history would be claimed by a save that never lived it.
+        // Only the name is local. Give the copy a fresh id and the next version from the other PC
+        // cannot find it - it still carries the original id, falls back to matching on the name,
+        // and lands on the very save the rename existed to protect.
         _desktop.MakeSave(saveName: "My Game");
         _laptop.MakeSave(saveName: "My Game", seed: 77);
 
@@ -703,13 +704,51 @@ public class TransferTests : IDisposable
 
         var engine = _laptop.NewEngine();
         var plan = engine.Inspect(pkg);
-        plan.InstallAsName = "Copy of My Game";
+        plan.InstallAsName = "My Game (from Chris)";
         engine.Import(plan, ImportChoice.InstallAsNewSave);
 
-        var added = _laptop.Slot(saveName: "Copy of My Game");
-        Assert.NotEqual(incomingId, added.Passport!.SaveId);
-        Assert.Empty(added.Passport.Chain);
-        Assert.Equal(1, added.Passport.Ordinal);
+        var added = _laptop.Slot(saveName: "My Game (from Chris)");
+        Assert.Equal(incomingId, added.Passport!.SaveId);
+        Assert.Equal("My Game (from Chris)", added.Passport.SaveName);
+    }
+
+    [Fact]
+    public void After_choosing_once_the_next_update_lands_on_its_own_with_nothing_to_decide()
+    {
+        // The requirement this whole rename exists to serve: somebody who has said "keep both"
+        // once must never be asked about that save again. She should be able to come home, open
+        // the game and play, having touched nothing.
+        _desktop.MakeSave(saveName: "My Game");
+        _laptop.MakeSave(saveName: "My Game", seed: 77);
+        var hers = Manifest.Build(_laptop.Slot(saveName: "My Game").Folder);
+
+        // Once: asked, and answered with "keep both".
+        var first = _desktop.NewEngine().Export(_desktop.Slot(saveName: "My Game"), _stick).PackageDir;
+        var engine = _laptop.NewEngine();
+        var plan = engine.Inspect(first);
+        Assert.True(plan.NeedsHumanChoice);
+        plan.InstallAsName = "My Game (from Chris)";
+        engine.Import(plan, ImportChoice.InstallAsNewSave);
+
+        // He plays some more and sends again.
+        _desktop.Play(_desktop.Slot(saveName: "My Game").Folder, seed: 202);
+        var second = _desktop.NewEngine().Export(_desktop.Slot(saveName: "My Game"), _stick).PackageDir;
+
+        var laterPlan = _laptop.NewEngine().Inspect(second);
+
+        // No question this time, and it knows exactly which folder it belongs in.
+        Assert.Equal(Relation.FastForward, laterPlan.Relation);
+        Assert.True(laterPlan.IsOneClickSafe);
+        Assert.False(laterPlan.NeedsHumanChoice);
+        Assert.Equal(
+            PathUtil.Normalize(_laptop.Slot(saveName: "My Game (from Chris)").Folder),
+            PathUtil.Normalize(laterPlan.TargetFolder));
+
+        var result = _laptop.NewEngine().Import(laterPlan, ImportChoice.Apply);
+        Assert.True(result.Applied);
+
+        // And hers is still exactly as it was, having never been involved.
+        Assert.Empty(hers.Verify(_laptop.Slot(saveName: "My Game").Folder));
     }
 
     [Fact]
