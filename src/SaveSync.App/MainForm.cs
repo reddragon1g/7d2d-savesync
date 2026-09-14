@@ -54,6 +54,9 @@ public sealed class MainForm : Form
 
     /// <summary>The last thing written about the stick, so a still screen does not repeat itself.</summary>
     private string _lastAssessment = "";
+
+    /// <summary>When it is worth trying to start networking again after a failure.</summary>
+    private DateTimeOffset? _networkRetryAt;
     private readonly System.Windows.Forms.Timer _housekeeping = new();
     private bool _reallyClosing;
 
@@ -91,7 +94,7 @@ public sealed class MainForm : Form
         BuildTray();
 
         _watchTimer.Interval = 2000;
-        _watchTimer.Tick += (_, _) => WatchDrives();
+        _watchTimer.Tick += (_, _) => { WatchDrives(); EnsureNetworkAlive(); };
 
         // An installed copy can run for weeks without being restarted, so the tidy-up cannot only
         // happen at startup.
@@ -474,6 +477,53 @@ public sealed class MainForm : Form
         _watcher.Start();
     }
 
+    /// <summary>
+    /// Puts networking back together whenever it is not actually working.
+    ///
+    /// The check used to be "is there a watcher object", which is true the moment one is
+    /// constructed - including when the listener underneath it failed to bind and the whole thing
+    /// is inert. A PC in that state looks perfectly healthy on screen and is unreachable from
+    /// anywhere, forever, because nothing ever tried again.
+    ///
+    /// It happens for an ordinary reason: during a handover the copy standing down still holds the
+    /// port for a moment, so the copy taking over can lose a race it has no way to see. One retry
+    /// fixes it; never retrying does not.
+    /// </summary>
+    private void EnsureNetworkAlive()
+    {
+        if (_engine is null || !_config.UseNetwork) return;
+        if (!FirewallSetup.IsConfigured()) return;
+
+        bool alive = _server is { Running: true };
+        if (alive) { _networkRetryAt = null; return; }
+
+        // Backed off, so a PC that genuinely cannot listen is not hammering itself.
+        var now = DateTimeOffset.UtcNow;
+        if (_networkRetryAt is { } due && now < due) return;
+        _networkRetryAt = now + TimeSpan.FromSeconds(20);
+
+        ActivityLog.Write("network is not listening"
+            + (_server?.StartFailure is null ? "" : $" ({_server.StartFailure})") + " - starting it again");
+
+        StopNetwork();
+        StartNetwork();
+
+        ActivityLog.Write(_server is { Running: true }
+            ? $"network is back, listening on port {_server.Port}"
+            : $"network still will not start{(_server?.StartFailure is null ? "" : ": " + _server.StartFailure)}");
+    }
+
+    private void StopNetwork()
+    {
+        try { _watcher?.Dispose(); } catch (Exception e) when (e is IOException or ObjectDisposedException) { }
+        try { _discovery?.Dispose(); } catch (Exception e) when (e is IOException or ObjectDisposedException) { }
+        try { _server?.Dispose(); } catch (Exception e) when (e is IOException or ObjectDisposedException) { }
+
+        _watcher = null;
+        _discovery = null;
+        _server = null;
+    }
+
     private void RefreshNetwork()
     {
         if (_watcher is null) { StartNetwork(); return; }
@@ -691,6 +741,12 @@ public sealed class MainForm : Form
             }
 
             ActivityLog.Write("handing over to the installed copy on request");
+
+            // Let go of BOTH contested things before the replacement starts: the single-instance
+            // slot and the network port. The replacement cannot see this copy shutting down, so
+            // anything still held when it starts is a race it loses silently - and the version
+            // that lost the port came up looking healthy while being unreachable.
+            StopNetwork();
             Program.ReleaseSingleInstanceSlot();
 
             if (!Installer.LaunchInstalledForHandover(!Visible))
