@@ -124,6 +124,11 @@ public static class SelfTestRunner
         // Not an error - the world simply is not ready yet. Try again next frame.
         if (world == null || player == null) return;
 
+        // And a player existing is not the same as the ground under them existing. The first run
+        // of this test reported every direction clear, including straight down, because the
+        // chunks were still streaming and World.IsAir calls an unloaded chunk empty.
+        if (!world.IsChunkAreaLoaded(player.position)) return;
+
         _finished = true;
         SelfTest.Run(world, player.position);
     }

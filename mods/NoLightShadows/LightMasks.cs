@@ -83,6 +83,15 @@ public static class LightMasks
         int id = light.GetInstanceID();
         var position = light.transform.position;
 
+        // World.IsAir answers "true" for a chunk that is not loaded. That is the right answer for
+        // the game - nothing is there to collide with - and exactly the wrong one here: a mask
+        // built while the surroundings are still streaming in finds no walls at all and comes out
+        // fully open, which is a light shining through everything.
+        //
+        // So nothing is built until the area is really loaded. Returning false leaves the light
+        // with its ordinary shadows, which is the safe state to wait in.
+        if (!world.IsChunkAreaLoaded(position - Origin.position)) return false;
+
         if (Masks.TryGetValue(id, out var existing) && existing.Cookie != null)
         {
             bool stale = existing.BuiltGeneration != Generation
