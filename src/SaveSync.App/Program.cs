@@ -23,6 +23,7 @@ internal static class Program
         // program, and the replacement would otherwise race the copy that is still shutting down
         // and be told it is already running.
         using var single = new Mutex(false, "SaveSync.7DaysToDie.SingleInstance");
+        _singleInstance = single;
 
         // A copy started BY an update handover waits far longer for the slot than one started by a
         // person double-clicking.
@@ -74,22 +75,30 @@ internal static class Program
                 }
             }
 
-            // A handover that could not get the slot must not go quietly: the machine is about to
-            // have nothing running at all, and saying so somewhere is the only way anybody finds
-            // out before trying to reach it.
+            // A handover that cannot get the slot carries on anyway.
+            //
+            // Two copies running is untidy - the second cannot take the network port and says so.
+            // Nothing running is unreachable, and on a machine nobody sits at that is unrecoverable
+            // without somebody walking over to it. Untidy beats unreachable every time.
             if (Has("--handover"))
             {
                 try
                 {
-                    var where = Path.Combine(Path.GetTempPath(), "savesync-handover-failed.txt");
+                    var where = Path.Combine(Path.GetTempPath(), "savesync-handover-slot.txt");
                     File.WriteAllText(where,
-                        $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss}  a handover to "
-                        + $"{Installer.ThisVersion} could not take the single-instance slot after "
-                        + $"{slotWait.TotalSeconds:0}s. The previous copy may still be shutting down."
+                        $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss}  handover to {Installer.ThisVersion} "
+                        + $"could not take the single-instance slot after {slotWait.TotalSeconds:0}s; "
+                        + "starting anyway rather than leaving this PC with nothing running."
                         + Environment.NewLine);
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+
+                held = true;
             }
+        }
+
+        if (!held)
+        {
 
             // Already running - most likely the installed copy sitting in the tray. Bring that one
             // to the front rather than telling them to go and find it.
@@ -116,7 +125,7 @@ internal static class Program
         }
         finally
         {
-            try { single.ReleaseMutex(); } catch (ApplicationException) { }
+            ReleaseSingleInstanceSlot();
         }
     }
 
@@ -182,6 +191,27 @@ internal static class Program
     /// Prints what the program can see. Exists so a non-technical user can be asked to run one
     /// command and send back the result when something is not where it was expected.
     /// </summary>
+    private static Mutex? _singleInstance;
+    private static bool _slotReleased;
+
+    /// <summary>
+    /// Gives up the single-instance slot before handing over to a newer copy.
+    ///
+    /// Without this the handover is a race with itself: the old copy starts the new one and only
+    /// then begins shutting down, so the new copy arrives to find the slot still taken and has to
+    /// outwait a shutdown of unknown length. Losing that race leaves the machine with nothing
+    /// running at all - which is precisely what happened to two PCs at once. Letting go of the
+    /// slot first removes the race rather than widening it.
+    /// </summary>
+    public static void ReleaseSingleInstanceSlot()
+    {
+        if (_slotReleased) return;
+        _slotReleased = true;
+
+        try { _singleInstance?.ReleaseMutex(); }
+        catch (Exception e) when (e is ApplicationException or ObjectDisposedException) { }
+    }
+
     private static int Diagnose()
     {
         var sb = new StringBuilder();

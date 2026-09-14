@@ -640,37 +640,22 @@ public sealed class MainForm : Form
                 Installer.InstallFrom(stagedExe);
                 ActivityLog.Write($"installed the update to {version} that arrived over the network");
 
-                // Take it into use now rather than at some future launch.
+                // Installed, but NOT taken into use on its own.
                 //
-                // A program cannot replace itself while running - but it can start the new copy and
-                // step aside, because that copy is a different file. Waiting for "next time this PC
-                // starts" meant a machine nobody sits at stayed on the old version indefinitely,
-                // which in turn meant nothing added to the newer version could ever be used on it:
-                // every fix was installed and unreachable at the same time.
+                // Handing over automatically cost two machines at once: each installed the update,
+                // started the replacement, and shut down - and the replacement lost the race for
+                // the single-instance slot and exited, leaving nothing running on either. The race
+                // is gone now, but an automatic action that can make a PC unreachable has to earn
+                // its way back, and it cannot do that on machines nobody can walk over to.
                 //
-                // Launch first, exit second. A machine left with nothing running is unreachable,
-                // which is far worse than out of date, so the old copy only stands down once the
-                // new one is confirmed started.
-                bool handedOver = Installer.IsInstalled && Installer.LaunchInstalledForHandover(!Visible);
-
-                if (handedOver)
-                {
-                    ActivityLog.Write($"handing over to {version} now that it is installed");
-                    _tray.ShowBalloonTip(6000, "Updated",
-                        $"Save Transfer {version} is now running. Your saves and backups are untouched.",
-                        ToolTipIcon.Info);
-
-                    _reallyClosing = true;
-                    Close();
-                    return;
-                }
-
-                ActivityLog.Write($"installed {version}, but could not hand over to it; "
-                    + "it will be used at the next launch");
+                // So the swap is a separate, asked-for step - one machine at a time, and the
+                // asker can see immediately whether it came back.
+                ActivityLog.Write($"installed {version}; it will be used at the next start, "
+                    + "or when this PC is asked to hand over");
 
                 _tray.ShowBalloonTip(8000, "This PC has a newer version ready",
-                    $"Save Transfer {version} is installed and will be the one that runs from next "
-                    + "time this PC starts. Your saves and backups are untouched.",
+                    $"Save Transfer {version} is installed. It starts being used the next time this "
+                    + "PC opens the program. Your saves and backups are untouched.",
                     ToolTipIcon.Info);
             }
             catch (Exception ex)
@@ -706,6 +691,7 @@ public sealed class MainForm : Form
             }
 
             ActivityLog.Write("handing over to the installed copy on request");
+            Program.ReleaseSingleInstanceSlot();
 
             if (!Installer.LaunchInstalledForHandover(!Visible))
             {
