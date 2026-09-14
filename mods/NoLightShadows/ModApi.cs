@@ -116,6 +116,14 @@ public static class LightLodVoxelMask
         var world = GameManager.Instance == null ? null : GameManager.Instance.World;
         if (world == null) return;
 
+        // What this light was doing BEFORE anything here touched it.
+        //
+        // Worth logging because the whole premise rests on it. If a light was already set to cast
+        // no shadows, then turning its shadows off changes nothing, costs nothing, and saves
+        // nothing - and a test built around such a light would show three identical photographs
+        // and prove only that the light was never the one being argued about.
+        Seen.Note(light.shadows);
+
         // Order is everything. Shadows come off only once the mask is on, so a light is never
         // left with neither - which would be a light shining straight through the wall.
         // The control: shadows off, nothing in their place. What should bleed.
@@ -133,6 +141,25 @@ public static class LightLodVoxelMask
         if (!LightMasks.Apply(light, world, stableRange)) return;
 
         if (light.shadows != LightShadows.None) light.shadows = LightShadows.None;
+    }
+}
+
+/// <summary>
+/// Counts what the game had each light set to, before this mod changed anything.
+///
+/// One line, once per distinct setting. The question it answers - "do these lights cast shadows
+/// at all" - is the premise everything else here depends on, and it had been assumed rather than
+/// checked.
+/// </summary>
+public static class Seen
+{
+    private static readonly System.Collections.Generic.HashSet<LightShadows> Reported = new();
+
+    public static void Note(LightShadows shadows)
+    {
+        if (!Reported.Add(shadows)) return;
+
+        Log.Out($"[NoLightShadows] found a player-placed light whose shadows were set to: {shadows}");
     }
 }
 
