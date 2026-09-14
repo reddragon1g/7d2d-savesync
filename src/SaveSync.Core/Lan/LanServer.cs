@@ -138,7 +138,7 @@ public sealed class LanServer : IDisposable
                     if (request.Op is "hello" or "pair" or "list-saves" or "request-send"
                         or "get-log" or "update-offer" or "update-file"
                         or "inbox-list" or "inbox-keep-both" or "restart" or "rename-save"
-                        or "get-machine") return;
+                        or "get-machine" or "game-stop" or "game-start") return;
                 }
             }
             catch (OperationCanceledException) { }
@@ -174,6 +174,8 @@ public sealed class LanServer : IDisposable
             "list-saves" => ListSaves(),
             "get-log" => GetLog(),
             "get-machine" => GetMachine(),
+            "game-stop" => GameStop(request),
+            "game-start" => GameStart(request),
             "inbox-list" => InboxList(),
             "inbox-keep-both" => InboxKeepBoth(request),
             "restart" => Restart(request),
@@ -327,6 +329,56 @@ public sealed class LanServer : IDisposable
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             return new List<string>();
+        }
+    }
+
+    /// <summary>
+    /// Asks the game to close. Asked, never killed.
+    ///
+    /// The game writes the world as it goes, and killing it mid-write produces exactly the broken
+    /// save everything else here exists to prevent. Closing it properly lets it finish.
+    /// </summary>
+    private LanResponse GameStop(LanRequest request)
+    {
+        var running = System.Diagnostics.Process.GetProcessesByName(GamePaths.ProcessName);
+        if (running.Length == 0) return new LanResponse { Ok = true, Message = "The game was not running." };
+
+        foreach (var p in running)
+        {
+            try { p.CloseMainWindow(); }
+            catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception) { }
+            finally { p.Dispose(); }
+        }
+
+        ActivityLog.Write($"asked by {request.DisplayName} to close the game");
+        return new LanResponse { Ok = true, Message = "Asked the game to close; it saves on the way out." };
+    }
+
+    /// <summary>Starts the game through Steam.</summary>
+    private LanResponse GameStart(LanRequest request)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "steam://rungameid/" + SteamLocator.SevenDaysAppId,
+                UseShellExecute = true,
+            });
+
+            ActivityLog.Write($"asked by {request.DisplayName} to start the game");
+
+            // Honest about the limit: Steam can be told to start the game, and nothing can be told
+            // which world to load - the game comes up at its own menu and a person picks from there.
+            return new LanResponse
+            {
+                Ok = true,
+                Message = "Asked Steam to start it. It will come up at its own menu; nothing can "
+                          + "choose the save for it.",
+            };
+        }
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            return LanResponse.Fail("Could not start it: " + e.Message);
         }
     }
 

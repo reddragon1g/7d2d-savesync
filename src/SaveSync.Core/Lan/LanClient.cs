@@ -284,6 +284,17 @@ public sealed class LanClient
         return (response.Ok, response.Ok ? response.Message ?? "Restarting." : response.Error ?? "Refused.");
     }
 
+    /// <summary>Asks another PC to close or start the game.</summary>
+    public async Task<(bool Ok, string Message)> GameAsync(
+        LanPeer peer, bool start, string senderName, CancellationToken ct = default)
+    {
+        var response = await SimpleAsync(peer, start ? "game-start" : "game-stop", senderName, null, null, ct)
+            .ConfigureAwait(false);
+
+        if (response is null) return (false, $"{peer.Label} did not answer.");
+        return (response.Ok, response.Ok ? response.Message ?? "Done." : response.Error ?? "Refused.");
+    }
+
     /// <summary>What another PC is, and how the game is running on it.</summary>
     public async Task<MachineReport?> MachineAsync(LanPeer peer, string senderName, CancellationToken ct = default)
     {

@@ -43,6 +43,7 @@ try
         case "restart": RestartPeer(int.TryParse(Arg(1), out var rw) ? rw : 8, Arg(2)); break;
         case "peersaves": PeerSaves(int.TryParse(Arg(1), out var sw) ? sw : 8, Arg(2)); break;
         case "machine": PeerMachine(int.TryParse(Arg(1), out var mw) ? mw : 8, Arg(2)); break;
+        case "game": Game_(At(1), Arg(2)); break;
         case "rename": RenamePeerSave(At(1), At(2), At(3), At(4)); break;
         case "keepboth": KeepBoth(int.TryParse(Arg(1), out var kw) ? kw : 8, At(2), At(3), Arg(4)); break;
         case "import": Import(At(1), At(2), Arg(3) ?? "apply"); break;
@@ -256,6 +257,29 @@ void Relay(string userData, string fromName, string toName, string world, string
     Console.WriteLine(sent.Sent
         ? $"delivered. {to.DisplayName} says: {sent.Message}"
         : $"not delivered: {sent.Message}");
+}
+
+/// <summary>Starts or closes the game on another PC.</summary>
+void Game_(string startOrStop, string? which)
+{
+    bool start = startOrStop.Equals("start", StringComparison.OrdinalIgnoreCase);
+    var config = AppConfig.Load();
+    using var discovery = new SaveSync.Core.Lan.Discovery(config) { PersonName = "probe" };
+    discovery.Start();
+    Thread.Sleep(TimeSpan.FromSeconds(8));
+
+    var peers = discovery.Peers
+        .Where(p => which is null || p.DisplayName.Contains(which, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    if (peers.Count == 0) { Console.WriteLine("no other PC answered."); return; }
+
+    var client = new SaveSync.Core.Lan.LanClient(config);
+    foreach (var peer in peers)
+    {
+        var r = client.GameAsync(peer, start, "probe").GetAwaiter().GetResult();
+        Console.WriteLine($"  {peer.DisplayName,-18} {(r.Ok ? "OK" : "refused")} - {r.Message}");
+    }
 }
 
 /// <summary>What each PC is, and how the game is running on it.</summary>
