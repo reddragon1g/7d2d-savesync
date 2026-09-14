@@ -35,8 +35,8 @@ public sealed class ModApi : IModApi
 {
     public void InitMod(Mod _modInstance)
     {
-        Log.Out("[NoLightShadows] player-placed lights will be masked from the blocks around them, "
-                + "not by rendering shadow maps; the sun is untouched");
+        Log.Out("[NoLightShadows] player-placed lights will not cast shadow maps; the sun is "
+                + "untouched and the game's own voxel lighting still shadows the world");
 
         new Harmony(GetType().ToString()).PatchAll(Assembly.GetExecutingAssembly());
     }
@@ -89,15 +89,49 @@ public static class LightLodVoxelMask
     /// with its shadows removed and nothing put in their place - which is exactly what the first
     /// version of this mod shipped, and exactly what should bleed.
     /// </summary>
-    private static bool NoMask
+    /// <summary>
+    /// Opts in to the voxel mask, which is NOT what this mod does by default and is not finished.
+    ///
+    /// Kept because the technique is sound and may be worth something elsewhere - a cookie built
+    /// from the block array genuinely is a shadow map that costs nothing per frame. Not enabled
+    /// because the problem it solves does not exist in this game, and because it still rebuilds
+    /// every mask on every block change anywhere in the world, which happens constantly. At about
+    /// a millisecond a mask that is far more expensive than the shadows it replaces.
+    /// </summary>
+    private static bool VoxelMaskWanted
     {
         get
         {
             foreach (var arg in System.Environment.GetCommandLineArgs())
-                if (arg.StartsWith("-NoLightShadowsNoMask", System.StringComparison.OrdinalIgnoreCase))
+                if (arg.StartsWith("-NoLightShadowsVoxelMask", System.StringComparison.OrdinalIgnoreCase))
                     return true;
 
             return false;
+        }
+    }
+
+    /// <summary>A shadow setting to force on every player-placed light, for testing.</summary>
+    private static LightShadows? Forced
+    {
+        get
+        {
+            foreach (var arg in System.Environment.GetCommandLineArgs())
+            {
+                if (!arg.StartsWith("-NoLightShadowsForce=", System.StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var value = arg.Substring("-NoLightShadowsForce=".Length).Trim().ToLowerInvariant();
+
+                return value switch
+                {
+                    "hard" => LightShadows.Hard,
+                    "soft" => LightShadows.Soft,
+                    "none" => LightShadows.None,
+                    _ => null,
+                };
+            }
+
+            return null;
         }
     }
 
@@ -126,8 +160,45 @@ public static class LightLodVoxelMask
 
         // Order is everything. Shadows come off only once the mask is on, so a light is never
         // left with neither - which would be a light shining straight through the wall.
-        // The control: shadows off, nothing in their place. What should bleed.
-        if (NoMask)
+        // -NoLightShadowsForce=hard or =none forces every player light to that setting and does
+        // nothing else.
+        //
+        // This exists because the first visual test was run against a candle, and candles arrive
+        // with their shadows already set to None. Turning off something already off changes
+        // nothing, which is why three photographs came back identical and appeared to prove the
+        // mask useless. Forcing the setting makes the same light answer the actual question: does
+        // removing a light's shadow let it through the wall?
+        var forced = Forced;
+        if (forced.HasValue)
+        {
+            if (light.shadows != forced.Value) light.shadows = forced.Value;
+            return;
+        }
+
+        // Shadows off, and nothing put in their place. This is what the mod does.
+        //
+        // It looked wrong for a while. A point light with no shadow map should spill through a
+        // wall, so an elaborate replacement was built: a mask computed from the block array and
+        // handed to the light as a cookie, costing nothing per frame. It is still in this mod,
+        // behind -NoLightShadowsVoxelMask, and it is not used.
+        //
+        // Because the premise was never true. Measured on the same candle in the same room at the
+        // same midnight, shadows forced on against forced off:
+        //
+        //     wall left of door   74.27 -> 71.76
+        //     wall far left       61.00 -> 58.71
+        //     wall above door     67.12 -> 65.60
+        //     inside the doorway  80.71 -> 82.25
+        //
+        // Removing the shadow makes the outside of the wall slightly DARKER, not brighter, and
+        // the only thing that brightens is the inside of the doorway - which is a light no longer
+        // shadowing itself on the door frame. There is no spill to contain.
+        //
+        // This game lights block surfaces through its own voxel propagation, which is what the
+        // updateLight flag on every block change drives. The world was already correctly shadowed
+        // before any Unity light was involved; the shadow map was six render passes per light per
+        // frame spent recomputing an answer the game already had.
+        if (!VoxelMaskWanted)
         {
             if (light.shadows != LightShadows.None) light.shadows = LightShadows.None;
             return;
@@ -201,7 +272,10 @@ public static class SelfTestRunner
     {
         if (_finished) return;
 
-        if (!SelfTest.Requested) { _finished = true; return; }
+        // Either flag is reason enough to keep looking. Gating the scene builder behind the self
+        // test meant two comparison runs quietly built nothing, and only looked right because the
+        // room from an earlier run had been saved into the world.
+        if (!SelfTest.Requested && !TestScene.Requested) { _finished = true; return; }
 
         var world = GameManager.Instance == null ? null : GameManager.Instance.World;
         var player = world == null ? null : world.GetPrimaryPlayer();
@@ -215,7 +289,8 @@ public static class SelfTestRunner
         if (!world.IsChunkAreaLoaded(player.position)) return;
 
         _finished = true;
-        SelfTest.Run(world, player.position);
+
+        if (SelfTest.Requested) SelfTest.Run(world, player.position);
 
         // Something to photograph. Only when asked for, and only ever in a throwaway world - it
         // writes blocks into whatever save is loaded.
