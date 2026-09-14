@@ -71,6 +71,13 @@ void Discover()
     var loc = GamePaths.Discover();
     Console.WriteLine();
     Console.WriteLine(loc is null ? "RESULT: not found" : $"RESULT: {loc.UserDataRoot}  ({loc.Provenance})");
+    if (loc is not null)
+    {
+        var ver = SaveDiscovery.ReadGameVersionHint(loc);
+        Console.WriteLine($"game ver  : {(string.IsNullOrWhiteSpace(ver) ? "(not detected)" : ver)}");
+        Console.WriteLine($"mods      : {Mods.Travelling(loc).Count} would travel, "
+            + $"{Mods.Enumerate(loc).Count(m => m.ShippedWithGame)} came with the game");
+    }
 }
 
 void List(string userData)

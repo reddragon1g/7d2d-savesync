@@ -172,9 +172,55 @@ public static class SaveDiscovery
     /// Best effort: a missing value downgrades to a warning, never a block.
     /// </summary>
     public static string ReadGameVersionHint(GameLocation loc)
+        => ReadVersionFromLogs(loc) is { Length: > 0 } fromLog ? fromLog : ReadVersionFromJoinedWorld(loc);
+
+    /// <summary>
+    /// The version the game itself printed at startup.
+    ///
+    /// This is the reliable source: every launch writes it, on every PC. The join-record method
+    /// below only exists on a machine that has played multiplayer, so on a single-player PC the
+    /// version came out blank - and a blank version silently disables the "that save was played on
+    /// a newer game version" warning, which is the one thing standing between a 3.2 save and a
+    /// 3.1 install.
+    /// </summary>
+    private static string ReadVersionFromLogs(GameLocation loc)
     {
-        // The client-side copy of a joined world records the host's version, which is the closest
-        // thing the game leaves lying around in a machine-readable form.
+        try
+        {
+            var logs = Path.Combine(loc.UserDataRoot, "logs");
+            if (!Directory.Exists(logs)) return "";
+
+            var newest = new DirectoryInfo(logs)
+                .GetFiles("output_log*.txt")
+                .OrderByDescending(f => f.LastWriteTimeUtc)
+                .FirstOrDefault();
+            if (newest is null) return "";
+
+            // The banner is in the first few lines; a play session log runs to hundreds of MB.
+            using var stream = new FileStream(newest.FullName, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            var buffer = new byte[64 * 1024];
+            int read = stream.Read(buffer, 0, buffer.Length);
+            var head = System.Text.Encoding.UTF8.GetString(buffer, 0, read);
+
+            var m = System.Text.RegularExpressions.Regex.Match(
+                head, @"Version:\s*(V[ ]?[0-9][^\s,)]*)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            return m.Success ? m.Groups[1].Value.Trim() : "";
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return "";
+        }
+    }
+
+    /// <summary>
+    /// Fallback: the client-side copy of a joined world records the host's version. Only present on
+    /// a machine that has played multiplayer, which is why it is second rather than first.
+    /// </summary>
+    private static string ReadVersionFromJoinedWorld(GameLocation loc)
+    {
         try
         {
             if (!Directory.Exists(loc.SavesLocalDir)) return "";
@@ -183,7 +229,7 @@ public static class SaveDiscovery
                 var xml = Path.Combine(d, "RemoteWorldInfo.xml");
                 if (!File.Exists(xml)) continue;
                 var text = File.ReadAllText(xml);
-                var m = System.Text.RegularExpressions.Regex.Match(text, "gameVersion\\s*=\\s*\"([^\"]+)\"");
+                var m = System.Text.RegularExpressions.Regex.Match(text, @"gameVersion\s*=\s*""([^""]+)""");
                 if (m.Success) return m.Groups[1].Value;
             }
         }

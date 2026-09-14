@@ -631,4 +631,31 @@ public class TransferTests : IDisposable
         Assert.False(plan.IsOneClickSafe);
         Assert.True(plan.NeedsHumanChoice);
     }
+
+    // ---------------------------------------------------------------- game version
+
+    [Fact]
+    public void The_game_version_is_read_from_the_game_own_log()
+    {
+        // Real regression: this was only read from a multiplayer join record, so on a PC that had
+        // only ever played single-player it came out blank - and a blank version silently disables
+        // the "that save was played on a newer game version" warning entirely. Seen for real: three
+        // packages made on a friend's PC all recorded no version at all.
+        var logs = Path.Combine(_desktop.Location.UserDataRoot, "logs");
+        Directory.CreateDirectory(logs);
+        TestEnv.WriteText(Path.Combine(logs, "output_log_client__2026-09-13__16-23-49.txt"),
+            "Mono path[0] = 'C:/whatever/7DaysToDie_Data/Managed'" + Environment.NewLine
+            + "2026-09-13T16:23:51 0.093 INF Version: V 3.2.0, Build: Windows 64 Bit" + Environment.NewLine
+            + "2026-09-13T16:23:51 0.094 INF System information:" + Environment.NewLine);
+
+        Assert.Equal("V 3.2.0", SaveDiscovery.ReadGameVersionHint(_desktop.Location));
+    }
+
+    [Fact]
+    public void A_missing_log_leaves_the_version_blank_rather_than_throwing()
+    {
+        // Best effort by design: no version downgrades to "no warning available", never a crash
+        // and never a block on an otherwise fine transfer.
+        Assert.Equal("", SaveDiscovery.ReadGameVersionHint(_desktop.Location));
+    }
 }
