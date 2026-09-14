@@ -46,6 +46,16 @@ public static class GameLog
         /// <summary>The end of the log, verbatim.</summary>
         public string Tail { get; init; } = "";
 
+        /// <summary>
+        /// How each recent session actually performed, oldest last.
+        ///
+        /// The machine report only ever reads the session happening right now, which on a PC
+        /// nobody is sitting at is a character standing perfectly still - the easiest case there
+        /// is, and not the one anybody is complaining about. Past sessions are the only place a
+        /// record of somebody actually PLAYING survives.
+        /// </summary>
+        public List<string> Sessions { get; init; } = new();
+
         public string Describe()
         {
             var lines = new List<string>
@@ -53,6 +63,13 @@ public static class GameLog
                 $"{FileName}  ({PathUtil.HumanBytes(SizeBytes)}, last written {WrittenAt.ToLocalTime():HH:mm:ss})",
                 "",
             };
+
+            if (Sessions.Count > 0)
+            {
+                lines.Add("How each recent session ran:");
+                lines.AddRange(Sessions.Select(x => "  " + x));
+                lines.Add("");
+            }
 
             if (Problems.Count == 0)
             {
@@ -138,6 +155,7 @@ public static class GameLog
                 WrittenAt = new DateTimeOffset(newest.LastWriteTimeUtc, TimeSpan.Zero),
                 SizeBytes = logs.Sum(l => l.Length),
                 Problems = problems,
+                Sessions = logs.Select(Summarise).Where(x => x.Length > 0).ToList(),
                 Tail = Tail(newest.FullName, tailBytes),
             };
         }
@@ -145,6 +163,66 @@ public static class GameLog
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// One session in one line: how long, how fast, and how much was going on.
+    ///
+    /// Chunk and object counts are carried alongside the frame rate on purpose. They barely move
+    /// while somebody stands still and change constantly while somebody walks, which is the only
+    /// way to tell from here whether a session is worth anything as evidence at all.
+    /// </summary>
+    private static string Summarise(FileInfo log)
+    {
+        try
+        {
+            var rates = new List<double>();
+            int chunksLow = int.MaxValue, chunksHigh = 0, objectsHigh = 0;
+
+            using var reader = new StreamReader(
+                new FileStream(log.FullName, FileMode.Open, FileAccess.Read,
+                               FileShare.ReadWrite | FileShare.Delete));
+
+            while (reader.ReadLine() is { } line)
+            {
+                if (!line.Contains("FPS:", StringComparison.Ordinal)) continue;
+
+                var fps = Number(line, "FPS");
+                if (fps <= 0) continue;
+                rates.Add(fps);
+
+                var chunks = (int)Number(line, "Chunks");
+                if (chunks > 0)
+                {
+                    chunksLow = Math.Min(chunksLow, chunks);
+                    chunksHigh = Math.Max(chunksHigh, chunks);
+                }
+                objectsHigh = Math.Max(objectsHigh, (int)Number(line, "CGO"));
+            }
+
+            if (rates.Count == 0) return $"{log.Name}: never got as far as playing";
+
+            var sorted = rates.OrderBy(r => r).ToList();
+            var moved = chunksHigh > 0 && chunksHigh - chunksLow > 8;
+
+            return $"{log.Name[^12..^4]}  {rates.Count,3} samples  "
+                   + $"typical {sorted[sorted.Count / 2],5:0.0} fps  "
+                   + $"worst {sorted[0],5:0.0}  best {sorted[^1],5:0.0}  "
+                   + $"chunks {(chunksLow == int.MaxValue ? 0 : chunksLow)}-{chunksHigh}  "
+                   + (moved ? "<- SOMEBODY WAS MOVING" : "(stood still)");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return "";
+        }
+    }
+
+    private static double Number(string line, string key)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(line, key + @":\s*([0-9.]+)");
+        return m.Success && double.TryParse(m.Groups[1].Value,
+            System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0;
     }
 
     /// <summary>

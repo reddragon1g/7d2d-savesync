@@ -111,10 +111,141 @@ public static class GameTuning
         new("OptionsGfxLimitFpsInGame", "30", "and a frame cap as well, for if vsync is ever turned off"),
     };
 
-    /// <summary>The profile by name, or null when the name is not one we know.</summary>
+    public const string Playable = "playable";
+
+    /// <summary>
+    /// What to actually play on: decent looking, and still nowhere near the thermal edge.
+    ///
+    /// The low-heat profile bought the largest margin available at a time when nobody knew how
+    /// much was needed, and it overpaid twice over - the card settled at 21% busy, and the game
+    /// rendered at 960x540 on a 1080p screen, which is genuinely unpleasant to look at.
+    ///
+    /// This spends that margin where it buys the most picture per watt. Texture quality and
+    /// filtering come back almost to maximum because they cost memory rather than time, and there
+    /// is 3.7 GB of unused video memory sitting there. Render scale goes up by half again. What
+    /// stays off is the genuinely expensive per-pixel work - shadows, ambient occlusion,
+    /// reflections, sun shafts - which is also mostly what was already off on that machine.
+    ///
+    /// Deliberately short of 0.75, which was tried and collapsed. The gap between "fine" and
+    /// "pinned at 300 MHz" turned out to be narrow, and there is no reason to go looking for it.
+    /// </summary>
+    public static readonly Setting[] PlayableProfile =
+    {
+        new("OptionsGfxUpscalerMode", "4", "render below native and upscale"),
+        new("OptionsGfxDynamicScale", "0.65", "render at 65% - half again the pixels of the safe profile"),
+        new("OptionsGfxVsync", "2", "lock to 30 fps, tear-free, for half the work of 60"),
+        new("OptionsGfxLimitFpsInGame", "30", "and a frame cap as well, for if vsync is ever turned off"),
+
+        // Cheap on a graphics card, and most of what the eye actually notices.
+        new("OptionsGfxTexQuality", "1", "near-best textures - costs memory, not time, and there is memory spare"),
+        new("OptionsGfxTexFilter", "2", "proper texture filtering"),
+        new("OptionsGfxObjQuality", "2", "object detail back to what this PC had"),
+        new("OptionsGfxTerrainQuality", "2", "terrain back to what this PC had"),
+        new("OptionsGfxTreeDistance", "2", "trees visible again, but not to the horizon"),
+        new("OptionsGfxGrassDistance", "1", "some grass"),
+        new("OptionsGfxAA", "1", "a little anti-aliasing, which upscaling benefits from"),
+
+        // Lighting. These are back to exactly what this PC had, and they are back because turning
+        // them off was a mistake worth recording: a world with no shadows in it does not read as
+        // "lower quality", it reads as BROKEN. Everything is evenly lit, nothing sits on the
+        // ground, and the reaction is "something is wrong with the game" rather than "the settings
+        // are low" - which is precisely what happened.
+        //
+        // Shadow DISTANCE is what costs; shadow quality at the lowest tier that still draws them
+        // is cheap, and it was already this machine's own setting.
+        new("OptionsGfxShadowQuality", "1", "shadows ON at their cheapest tier - as this PC had them"),
+        new("OptionsGfxShadowDistance", "0", "close-range shadows only, which is where the cost is"),
+        new("OptionsGfxOcclusion", "true", "contact shading back, as this PC had it"),
+        new("OptionsGfxSSReflections", "1", "screen-space reflections back, as this PC had them"),
+        new("OptionsGfxSignQuality", "2", "signs as this PC had them"),
+
+        // Genuinely expensive per-pixel work, and all of it was already off on this machine - so
+        // none of this is a downgrade from what the person here was looking at.
+        new("OptionsGfxReflectQuality", "0", "no reflection probes - was already off here"),
+        new("OptionsGfxReflectShadows", "false", "no shadows in reflections - was already off here"),
+        new("OptionsGfxSSAO", "false", "no ambient occlusion - was already off here"),
+        new("OptionsGfxSunShafts", "false", "no sun shafts - was already off here"),
+        new("OptionsGfxBloom", "false", "no bloom - was already off here"),
+        new("OptionsGfxDOF", "false", "no depth of field - was already off here"),
+        new("OptionsGfxMotionBlur", "0", "no motion blur - was already off here"),
+        new("OptionsGfxWaterQuality", "0", "lowest water"),
+        new("OptionsGfxViewDistance", "5", "the shortest view distance the game offers"),
+    };
+
+    public const string BaseFix = "basefix";
+
+    /// <summary>
+    /// For a save with an enormous player base in it.
+    ///
+    /// Measured rather than assumed: this save loads 1,292 dynamic mesh items, and the machinery
+    /// that manages them was caching almost none of them - MaxRegionCache at 1 and MaxItemCache at
+    /// 3, both the minimum the game allows. Everything outside that tiny cache is thrown away and
+    /// rebuilt as the player moves through their own base.
+    ///
+    /// That matters more than a frame rate, because dynamic meshes carry COLLISION. Regenerating
+    /// them under somebody's feet slower than they can walk is how a player falls through their
+    /// own floor and gets pushed back out - which from a chair looks exactly like rubber-banding
+    /// and being flung around, and which no frame-rate average will ever show.
+    ///
+    /// Worth knowing that this is not a weak-machine problem. A machine with an RTX 3070 Ti loads
+    /// the same save and its mesh regeneration thread blocks for 3.9 seconds too. The base really
+    /// is heavy; the laptop just has less to absorb it with.
+    ///
+    /// Costs memory, which is the one thing that laptop has spare - 11 GB free of 24.
+    /// </summary>
+    public static readonly Setting[] BaseFixProfile =
+    {
+        new("DynamicMeshMaxRegionCache", "3", "keep 3 regions of base meshes, not 1 - the most the game allows"),
+        new("DynamicMeshMaxItemCache", "6", "keep 6 item caches, not 3 - again the maximum"),
+        new("DynamicMeshUseImposters", "true", "simplified stand-ins for distant parts of the base"),
+    };
+
+    public const string NoDymesh = "nodymesh";
+
+    /// <summary>
+    /// Turns the dynamic mesh system off entirely. The blunt instrument, kept for a real answer.
+    ///
+    /// If the caches do not fix it, this says whether dynamic mesh is the cause at all - the base
+    /// still renders, through the ordinary chunk path, and the whole subsystem stops running. Not
+    /// a setting to leave on without deciding to: it changes how damage to player-built structures
+    /// behaves. But as a one-run experiment it answers the question outright.
+    /// </summary>
+    public static readonly Setting[] NoDymeshProfile =
+    {
+        new("DynamicMeshEnabled", "false", "stop managing the base as dynamic meshes at all"),
+    };
+
+    /// <summary>
+    /// Profiles by name, combined with "+" - so "lowheat+basefix" is both.
+    ///
+    /// Composing matters here because the problems turned out to be separate: a graphics card with
+    /// no fan and a base big enough to stall a far better machine are different faults, and a
+    /// profile that fixed one while leaving the other looked like it had failed entirely.
+    /// </summary>
     public static Setting[]? ByName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
+
+        var found = new List<Setting>();
+
+        foreach (var part in name.Split('+', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var one = Single(part.Trim());
+            if (one is null) return null;         // one unknown name spoils the whole request
+            found.AddRange(one);
+        }
+
+        // Later profiles win, so "lowheat+basefix" applies basefix's values over lowheat's.
+        return found.Count == 0 ? null
+             : found.GroupBy(s => s.Pref).Select(g => g.Last()).ToArray();
+    }
+
+    private static Setting[]? Single(string name)
         => string.Equals(name, LowHeat, StringComparison.OrdinalIgnoreCase) ? LowHeatProfile
          : string.Equals(name, Balanced, StringComparison.OrdinalIgnoreCase) ? BalancedProfile
+         : string.Equals(name, Playable, StringComparison.OrdinalIgnoreCase) ? PlayableProfile
+         : string.Equals(name, BaseFix, StringComparison.OrdinalIgnoreCase) ? BaseFixProfile
+         : string.Equals(name, NoDymesh, StringComparison.OrdinalIgnoreCase) ? NoDymeshProfile
          : null;
 
     /// <summary>The preferences a profile touches, for capturing before they are changed.</summary>
@@ -125,8 +256,7 @@ public static class GameTuning
         => profile.Select(s => $"-{s.Pref}={s.Value}");
 
     public static string Describe(Setting[] profile)
-        => profile.Length <= 5
-            ? $"{profile.Length} settings - render scale and a 30 fps lock, everything else left as this PC has it"
-            : $"{profile.Length} settings, the game's own lowest preset plus half render scale "
-              + "and a 30 fps cap";
+        => $"{profile.Length} settings ("
+           + string.Join(", ", profile.Take(3).Select(s => s.Pref.Replace("OptionsGfx", "")))
+           + (profile.Length > 3 ? ", ..." : "") + ")";
 }
