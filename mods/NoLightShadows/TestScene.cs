@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace NoLightShadows;
@@ -28,7 +29,24 @@ public static class TestScene
 {
     private const string Flag = "-NoLightShadowsBuildTest";
 
-    private const string WallBlock = "terrStone";
+    /// <summary>
+    /// Candidates for the walls, tried in order until one resolves to a real block.
+    ///
+    /// The first attempt used terrStone and produced a room that existed in the block data and
+    /// rendered as nothing at all - terrain blocks are rebuilt through the terrain mesh rather
+    /// than the block mesh, so placing one in mid air leaves it invisible. The candle placed at
+    /// the same moment rendered perfectly, which is how the difference showed up.
+    ///
+    /// Rather than guess again, the list is tried and the winner logged. Block names in this game
+    /// change between versions and "shapes" blocks need a variant suffix whose spelling is not
+    /// obvious from the data files.
+    /// </summary>
+    private static readonly string[] WallCandidates =
+    {
+        "concreteShapes:Cube", "cobblestoneShapes:Cube", "steelShapes:Cube", "brickShapes:Cube",
+        "concreteBlock", "cobblestoneBlock", "terrStone",
+    };
+
     private const string LightBlock = "candleTableLightPlayer";
 
     private static bool _built;
@@ -73,21 +91,45 @@ public static class TestScene
         int cy = Mathf.FloorToInt(playerPos.y);
         int cz = Mathf.FloorToInt(centre.z);
 
-        var wall = Block.GetBlockValue(WallBlock, true);
         var light = Block.GetBlockValue(LightBlock, true);
-        var air = BlockValue.Air;
 
-        if (wall.isair || light.isair)
+        var wall = BlockValue.Air;
+        string wallName = null;
+
+        foreach (var candidate in WallCandidates)
         {
-            Log.Error($"[NoLightShadows] test scene: could not find '{WallBlock}' or '{LightBlock}'");
+            var tried = Block.GetBlockValue(candidate, true);
+            if (tried.isair) continue;
+
+            wall = tried;
+            wallName = candidate;
+            break;
+        }
+
+        if (wallName == null || light.isair)
+        {
+            Log.Error($"[NoLightShadows] test scene: no wall block resolved from {WallCandidates.Length} "
+                      + $"candidates, or '{LightBlock}' is missing");
             return;
         }
+
+        Log.Out($"[NoLightShadows] using '{wallName}' for the walls");
 
         Log.Out($"[NoLightShadows] building a test room at {cx}, {cy}, {cz}");
 
         // A hollow box, walls one block thick, tall enough to stand in.
         const int half = 3;
         const int height = 4;
+
+        // The doorway, punched through the wall nearest the player so the inside is visible.
+        int doorX = cx;
+        int doorZ = cz - half;
+
+        // Gathered and submitted together through the game's own block-change path. World.SetBlock
+        // writes the data and leaves the chunk mesh alone, which is why the first version of this
+        // built a room nobody could see; SetBlocksRPC is what the game itself calls, and it
+        // rebuilds the mesh as a matter of course.
+        var changes = new List<BlockChangeInfo>();
 
         for (int x = cx - half; x <= cx + half; x++)
         for (int z = cz - half; z <= cz + half; z++)
@@ -97,25 +139,37 @@ public static class TestScene
                            || z == cz - half || z == cz + half
                            || y == cy || y == cy + height;
 
-            world.SetBlock(new Vector3i(x, y, z), onShell ? wall : air, true, true);
+            bool isDoorway = x == doorX && z == doorZ && (y == cy + 1 || y == cy + 2);
+            bool isCandle = x == cx && z == cz && y == cy + 1;
+
+            var what = isCandle ? light
+                     : isDoorway ? BlockValue.Air
+                     : onShell ? wall
+                     : BlockValue.Air;
+
+            changes.Add(new BlockChangeInfo(new BlockValueRef(new Vector3i(x, y, z)), what, true));
         }
 
-        // The doorway, punched through the wall nearest the player so the inside is visible.
-        var toPlayer = -flat;
-        int doorX = cx + Mathf.RoundToInt(toPlayer.x * half);
-        int doorZ = cz + Mathf.RoundToInt(toPlayer.z * half);
-
-        world.SetBlock(new Vector3i(doorX, cy + 1, doorZ), air, true, true);
-        world.SetBlock(new Vector3i(doorX, cy + 2, doorZ), air, true, true);
-
-        // The light, on the floor in the middle, away from every wall.
-        world.SetBlock(new Vector3i(cx, cy + 1, cz), light, true, true);
+        world.SetBlocksRPC(changes);
 
         // Face the room, and stand far enough back to see all of it. Without this the camera
         // points wherever the player happened to spawn looking, which the first attempt proved
         // is usually at a building somewhere else entirely.
         player.SetPosition(new Vector3(cx + 0.5f, cy + 1.5f, cz - 9f));
         player.SetRotationAndStopTurning(new Vector3(0f, 0f, 0f));
+
+        // Read back what was written. "SetBlock returned without throwing" is not the same as
+        // "there is a wall there", and the difference between those two is the difference between
+        // debugging a renderer and debugging a block placement - which are not the same evening.
+        // Read back a spot that is definitely wall and definitely NOT the doorway. The first
+        // version of this check sampled the doorway itself and reported "air", which looked
+        // exactly like the walls having failed to place.
+        var wallCheck = world.GetBlock(new Vector3i(cx + 1, cy + 2, cz - half));
+        var lightCheck = world.GetBlock(new Vector3i(cx, cy + 1, cz));
+
+        Log.Out($"[NoLightShadows] readback: wall block at the near face is "
+                + $"'{wallCheck.Block?.GetBlockName() ?? "null"}' (air={wallCheck.isair}), "
+                + $"light is '{lightCheck.Block?.GetBlockName() ?? "null"}' (air={lightCheck.isair})");
 
         Log.Out($"[NoLightShadows] test room built: doorway at {doorX}, {cy + 1}, {doorZ}, "
                 + $"candle at {cx}, {cy + 1}, {cz}");
