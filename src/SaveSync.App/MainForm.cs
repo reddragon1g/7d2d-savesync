@@ -210,6 +210,7 @@ public sealed class MainForm : Form
 
         _links.Add(MakeLink("Not you?", SwitchProfile));
         _links.Add(MakeLink("Backups", ShowBackups));
+        _links.Add(MakeLink("What it has been doing", ShowActivityLog));
         _links.Add(MakeLink("Use a different drive", ChooseStick));
         _links.Add(MakeLink("Find my saves", ChooseSavesFolder));
         foreach (var l in _links) Controls.Add(l);
@@ -385,6 +386,11 @@ public sealed class MainForm : Form
             return;
         }
 
+        ActivityLog.Open(_engine.Workspace, Machine.Name);
+        ActivityLog.Session($"started  v{TransferEngine.ToolVersion}  as {_profile.Name}  "
+            + $"from {AppContext.BaseDirectory}  installed={Installer.IsInstalled}");
+        ActivityLog.Write($"saves at  {_engine.Location.UserDataRoot}  ({_engine.Location.Provenance})");
+
         try
         {
             foreach (var note in _engine.RecoverInterrupted())
@@ -398,6 +404,7 @@ public sealed class MainForm : Form
         Inbox.Cleanup(_engine.Workspace, TimeSpan.FromDays(14));
 
         _stickRoot ??= StickLocator.FindStick();
+        if (_stickRoot is not null) ActivityLog.MirrorTo(_stickRoot);
         StartNetwork();
         Rebuild();
         _watchTimer.Start();
@@ -443,6 +450,7 @@ public sealed class MainForm : Form
 
             _autoState.LastFullCheck = DateTimeOffset.UtcNow;
             _lastTrigger = trigger;
+            ActivityLog.Write($"checking the other PC  ({AutoSyncPolicy.Explain(trigger)})");
             return true;
         };
 
@@ -476,6 +484,9 @@ public sealed class MainForm : Form
         BeginInvoke(() =>
         {
             _news = news;
+
+            foreach (var n in news)
+                ActivityLog.Write($"  {n.Peer.Label}: {n.Display}  ->  {n.Direction}  ({n.Summary})");
 
             if (_config.AutoSync) { RunAutoSync(news); return; }
 
@@ -537,6 +548,11 @@ public sealed class MainForm : Form
             if (IsDisposed || !IsHandleCreated) return;
             BeginInvoke(() =>
             {
+                ActivityLog.Write(moved.Count > 0
+                    ? "automatic transfer moved: " + string.Join(", ", moved)
+                    : "automatic transfer moved nothing"
+                      + (stuck.Count > 0 ? $" ({stuck.Count} waiting for a person)" : ""));
+
                 if (moved.Count > 0)
                 {
                     _autoState.LastTransfer = DateTimeOffset.UtcNow;
@@ -1257,6 +1273,40 @@ public sealed class MainForm : Form
         }
 
         Rebuild();
+    }
+
+    /// <summary>
+    /// Opens the account of what this copy has done.
+    ///
+    /// The question it answers is "did it ever even look?", which is the first thing worth knowing
+    /// when somebody arrives somewhere and finds an old save - and the one thing that was
+    /// impossible to find out before this existed.
+    /// </summary>
+    private void ShowActivityLog()
+    {
+        var path = ActivityLog.FilePath;
+        if (path is null || !File.Exists(path))
+        {
+            Dialogs.Info(this, "Nothing recorded yet",
+                "This copy has not done anything worth writing down since it started.");
+            return;
+        }
+
+        // Copy it onto the stick on the way past, so the other PC's story can come home too.
+        if (_stickRoot is not null) ActivityLog.MirrorTo(_stickRoot);
+
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = path,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            Dialogs.Warn(this, "Could not open it", ex.Message + Environment.NewLine + Environment.NewLine + path);
+        }
     }
 
     private void ShowBackups()

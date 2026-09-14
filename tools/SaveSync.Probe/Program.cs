@@ -56,7 +56,13 @@ GameLocation Locate(string userData)
     => GamePaths.Discover(userData, Environment.GetEnvironmentVariable("SAVESYNC_PROBE_INSTALL"))
        ?? throw new InvalidOperationException($"not a user data folder: {userData}");
 
-TransferEngine Engine(string userData) => new(new AppConfig { SnapshotsToKeep = 10 }, Locate(userData));
+TransferEngine Engine(string userData)
+{
+    var loc = Locate(userData);
+    var engine = new TransferEngine(new AppConfig { SnapshotsToKeep = 10 }, loc);
+    ActivityLog.Open(engine.Workspace, Machine.Name + " (probe)");
+    return engine;
+}
 
 void Kinship(string saveA, string saveB)
 {

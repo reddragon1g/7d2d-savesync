@@ -268,4 +268,78 @@ public class ConfigTests : IDisposable
         st.LastFullCheck = after;
         Assert.Equal(AutoSyncTrigger.None, Decide(true, false, true, st, after + TimeSpan.FromSeconds(30)));
     }
+
+    // ---------------------------------------------------------------- the activity log
+
+    [Fact]
+    public void The_log_writes_nothing_at_all_until_it_is_opened()
+    {
+        // The same trap the settings file fell into: a static that defaults to a real location
+        // will be written to by tests, and the first sign of it is somebody's own file being
+        // replaced. Silence until asked is what makes that impossible.
+        ActivityLog.Close();
+        Assert.Null(ActivityLog.FilePath);
+
+        ActivityLog.Write("this must go nowhere");   // must not throw, must not create anything
+
+        Assert.Null(ActivityLog.FilePath);
+    }
+
+    [Fact]
+    public void The_log_records_what_happened_in_readable_lines()
+    {
+        var ws = new Workspace(Path.Combine(_dir, "userdata"));
+        try
+        {
+            ActivityLog.Open(ws, "LAPTOP");
+            ActivityLog.Write("looked at My Game (Navezgane) -> FastForward");
+
+            var text = File.ReadAllText(ActivityLog.FilePath!);
+
+            Assert.Contains("LAPTOP", text);
+            Assert.Contains("FastForward", text);
+            Assert.StartsWith("20", text);               // starts with the date, not junk
+
+            // Checked as bytes, because reading the file back quietly strips a byte-order mark -
+            // so a string comparison cannot see the thing being guarded against.
+            var first = File.ReadAllBytes(ActivityLog.FilePath!).Take(3).ToArray();
+            Assert.NotEqual(new byte[] { 0xEF, 0xBB, 0xBF }, first);
+        }
+        finally { ActivityLog.Close(); }
+    }
+
+    [Fact]
+    public void A_machines_log_can_be_carried_home_on_the_stick()
+    {
+        // The only way an account of what happened on a PC nobody can reach ever comes back.
+        var ws = new Workspace(Path.Combine(_dir, "userdata"));
+        var stick = Path.Combine(_dir, "stick");
+        Directory.CreateDirectory(stick);
+
+        try
+        {
+            ActivityLog.Open(ws, "CHRIS-PC");
+            ActivityLog.Write("applied My Game (Navezgane) v3");
+            ActivityLog.MirrorTo(stick);
+
+            var carried = ActivityLog.OnStick(stick);
+            var one = Assert.Single(carried);
+
+            Assert.Equal("CHRIS-PC.log", Path.GetFileName(one));
+            Assert.Contains("applied My Game", File.ReadAllText(one));
+        }
+        finally { ActivityLog.Close(); }
+    }
+
+    [Fact]
+    public void Mirroring_without_a_log_does_nothing_rather_than_failing()
+    {
+        ActivityLog.Close();
+        var stick = Path.Combine(_dir, "stick2");
+        Directory.CreateDirectory(stick);
+
+        ActivityLog.MirrorTo(stick);      // must not throw
+
+        Assert.Empty(ActivityLog.OnStick(stick));
+    }
 }

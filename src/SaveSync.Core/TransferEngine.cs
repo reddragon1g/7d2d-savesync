@@ -341,6 +341,10 @@ public sealed class TransferEngine
 
         FileOps.CopyTree(slot.Folder, PackageLayout.Payload(packageDir), progress, ct);
 
+        ActivityLog.Write($"packaged  {slot.SaveName} ({slot.World})  v{passport.Ordinal}  "
+            + $"{PathUtil.HumanBytes(manifest.TotalBytes)} in {manifest.Count} files"
+            + (mods.Count > 0 ? $"  +{mods.Count} mods" : ""));
+
         var result = new ExportResult
         {
             PackageDir = packageDir,
@@ -482,6 +486,10 @@ public sealed class TransferEngine
 
         var modPlan = Mods.PlanAgainstDisk(Location, info.Mods);
         modPlan.FilesAvailable = info.IncludesModFiles && Directory.Exists(PackageLayout.Mods(packageDir));
+
+        ActivityLog.Write($"looked at  {incoming.SaveName} ({incoming.World})  v{incoming.Ordinal} "
+            + $"from {info.CreatedBy}  ->  {relation}"
+            + (localDirty ? "  (this PC played since its last copy)" : ""));
 
         var plan = new ImportPlan
         {
@@ -627,7 +635,11 @@ public sealed class TransferEngine
         CancellationToken ct = default)
     {
         if (choice == ImportChoice.KeepLocal)
+        {
+            ActivityLog.Write($"kept local  {plan.Info.Passport.SaveName} ({plan.Info.Passport.World})  "
+                + $"relation={plan.Relation}  nothing changed");
             return new ImportResult { Applied = false };
+        }
 
         lock (MutationGate)
         {
@@ -778,6 +790,11 @@ public sealed class TransferEngine
             ledger.Record(applied.SaveId, applied.VersionId);
             ledger.Save(Workspace);
             MarkPackageConsumed(plan.PackageDir);
+
+            ActivityLog.Write($"applied  {applied.SaveName} ({applied.World})  v{applied.Ordinal} "
+                + $"from {plan.Info.CreatedBy}  relation={plan.Relation}  choice={choice}"
+                + (backup is not null ? $"  (previous kept as backup {backup.Id})" : "")
+                + (result.ModsInstalled.Count > 0 ? $"  mods+{result.ModsInstalled.Count}" : ""));
 
             var final = new ImportResult { Applied = true, Backup = backup, Passport = applied };
             foreach (var f in result.Findings) final.Findings.Add(f);

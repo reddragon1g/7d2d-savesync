@@ -263,10 +263,30 @@ internal static class Program
             }
         }
 
+        // The tail of the log last, so a report pasted anywhere ends with what actually happened.
         sb.AppendLine();
         sb.AppendLine("known other PCs:");
         foreach (var peer in config.Peers)
             sb.AppendLine($"  {peer.DisplayName} ({peer.MachineId}) paired={peer.IsPaired} last={peer.LastAddress}");
+
+        var logPath = loc is null ? null : Path.Combine(new Workspace(loc.UserDataRoot).Logs, ActivityLog.FileName);
+        sb.AppendLine();
+        if (logPath is not null && File.Exists(logPath))
+        {
+            sb.AppendLine($"what it has been doing ({logPath}), most recent last:");
+            try
+            {
+                foreach (var line in File.ReadLines(logPath).TakeLast(60)) sb.AppendLine("  " + line);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                sb.AppendLine("  could not read it: " + e.Message);
+            }
+        }
+        else
+        {
+            sb.AppendLine("what it has been doing: nothing recorded yet.");
+        }
 
         var text = sb.ToString();
         Console.WriteLine(text);
