@@ -68,8 +68,45 @@ public sealed class MachineReport
     /// </summary>
     public bool? SpawnButtonSkipped { get; init; }
 
+    /// <summary>Whole-machine processor use, measured over a window. -1 when it could not be read.</summary>
+    public double CpuPercent { get; init; } = -1;
+
+    /// <summary>The busiest processes by processor, which is a different list from the hungriest.</summary>
+    public List<SystemLoad.ProcessLoad> Busiest { get; init; } = new();
+
+    /// <summary>What the game itself is using, whether or not it is among the busiest.</summary>
+    public SystemLoad.ProcessLoad? GameLoad { get; init; }
+
+    /// <summary>The NVIDIA card, and crucially whether the game is on it.</summary>
+    public SystemLoad.NvidiaState? Nvidia { get; init; }
+
+    /// <summary>The chip the game reported drawing on, from its own log.</summary>
+    public SystemLoad.GameRenderer? Renderer { get; init; }
+
+    /// <summary>
+    /// How much of the commit limit is page file rather than real memory.
+    ///
+    /// Windows sizes the page file automatically, so this is not a setting anybody chose. What
+    /// makes it worth reporting is the comparison: a machine whose commit charge sits below its
+    /// physical memory is not paging, and paging can be crossed off without arguing about it.
+    /// </summary>
+    public long PageFileBytes { get; init; }
+
+    /// <summary>What the game is being asked to draw. The other half of "the card is at 100%".</summary>
+    public SystemLoad.GraphicsSettings? Graphics { get; init; }
+
+    /// <summary>True when this is a laptop running on battery. Null when it has no battery.</summary>
+    public bool? OnBattery { get; init; }
+
+    /// <summary>Which Windows power plan is active. A power-saving plan caps clocks on its own.</summary>
+    public string PowerPlan { get; init; } = "";
+
     public static MachineReport Read(GameLocation? location)
     {
+        // One measured window, taken before anything else, so every load figure below describes
+        // the same two seconds rather than three different moments stitched together.
+        var load = SystemLoad.Measure(TimeSpan.FromSeconds(2));
+
         return new MachineReport
         {
             MachineName = Machine.Name,
@@ -91,6 +128,15 @@ public sealed class MachineReport
             LastLaunch = location is null ? "" : DescribeLastLaunch(location),
             LoadedSave = location is null ? "" : GameLauncher.ReadLoadedSave(location)?.Describe() ?? "",
             SpawnButtonSkipped = GameLauncher.SpawnButtonSkipped(),
+            CpuPercent = load.CpuPercent,
+            Busiest = load.Busiest,
+            GameLoad = load.Game,
+            Nvidia = SystemLoad.ReadNvidia(),
+            Renderer = location is null ? null : SystemLoad.ReadGameRenderer(location),
+            PageFileBytes = Math.Max(0, Memory().CommitLimit - Memory().Total),
+            Graphics = SystemLoad.ReadGraphicsSettings(),
+            OnBattery = SystemLoad.OnBattery(),
+            PowerPlan = SystemLoad.ActivePowerPlan(),
         };
     }
 
@@ -130,6 +176,55 @@ public sealed class MachineReport
                       + "when the game closes)");
         if (Game is not null) lines.Add(Game.Describe());
 
+        // ---- graphics. On a laptop with two chips this is the first thing to settle, because
+        // every other explanation is a waste of time until it is ruled out.
+        lines.Add("");
+        if (Renderer is not null) lines.Add(Renderer.Describe(GameRunning));
+        if (Nvidia is not null)
+        {
+            lines.Add("NVIDIA card: " + Nvidia.Describe()
+                      + (GameRunning ? (Nvidia.GameIsOnIt ? "  -  the game IS on it"
+                                                          : "  -  the game is NOT on it") : ""));
+        }
+        if (WrongChip() is { } chip) lines.Add("  >> " + chip);
+        if (Nvidia?.Heat() is { } heat) lines.Add(heat);
+        if (Nvidia?.HeldBack() is { } held) lines.Add("  >> " + held);
+        lines.Add("Power: " + OnBattery switch
+        {
+            true => "ON BATTERY. Windows and the graphics driver both cut speed hard on battery; "
+                    + "plug it in before judging anything else.",
+            false => "plugged in.",
+            _ => "no battery, or could not be read.",
+        } + (PowerPlan.Length > 0 ? $"  Windows power plan: {PowerPlan}." : ""));
+
+        // ---- processor
+        if (CpuPercent >= 0)
+        {
+            var busy = CpuPercent >= 90 ? "  <- saturated" : CpuPercent >= 70 ? "  <- working hard" : "";
+            lines.Add($"Processor: {CpuPercent:0}% across all {Cores} threads{busy}");
+        }
+        if (GameLoad is not null)
+            lines.Add($"  the game itself: {GameLoad.CpuPercent:0.0}% of the whole machine "
+                      + $"(about {GameLoad.CpuPercent * Cores / 100.0:0.0} threads' worth)");
+
+        // ---- paging
+        lines.Add(PagingVerdict());
+
+        if (Graphics is not null)
+        {
+            lines.Add("");
+            lines.Add("Graphics settings (bigger costs more; view distance is in chunks "
+                      + "and is by far the most expensive):");
+            lines.AddRange(Graphics.Describe());
+        }
+
+        if (Busiest.Count > 0)
+        {
+            lines.Add("");
+            lines.Add("Busiest right now (processor):");
+            foreach (var proc in Busiest) lines.Add("  " + proc.Describe());
+        }
+
         if (TopProcesses.Count > 0)
         {
             lines.Add("");
@@ -139,6 +234,60 @@ public sealed class MachineReport
         }
 
         return string.Join(Environment.NewLine, lines);
+    }
+
+    /// <summary>
+    /// Says so, in as many words, when the game is drawing on the wrong graphics chip.
+    ///
+    /// This is worth stating rather than leaving to be worked out, because the two situations look
+    /// identical from a distance and call for opposite responses. A laptop reporting "Intel UHD
+    /// Graphics" is usually a laptop with a perfectly good card sitting idle next to it, and no
+    /// amount of turning settings down will fix being on the wrong one.
+    /// </summary>
+    private string? WrongChip()
+    {
+        if (Renderer is null) return null;
+
+        var drawingOnIntegrated =
+            Renderer.Gpu.Contains("Intel", StringComparison.OrdinalIgnoreCase)
+            || Renderer.Gpu.Contains("Radeon Graphics", StringComparison.OrdinalIgnoreCase)
+            || Renderer.Gpu.Contains("Vega", StringComparison.OrdinalIgnoreCase);
+
+        var hasDiscrete = Gpu.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase)
+                          || Gpu.Contains("RTX", StringComparison.OrdinalIgnoreCase)
+                          || Gpu.Contains("GTX", StringComparison.OrdinalIgnoreCase);
+
+        if (drawingOnIntegrated && hasDiscrete)
+            return "THE GAME IS ON THE WRONG CHIP. This PC has a proper graphics card, and the "
+                   + "game is drawing on the built-in one. Windows Settings > System > Display > "
+                   + "Graphics > 7DaysToDie.exe > Options > High performance, then restart the game.";
+
+        if (Nvidia is { GameIsOnIt: false } && GameRunning && !drawingOnIntegrated)
+            return "The game is running but is not on the NVIDIA card, which is worth a look.";
+
+        return null;
+    }
+
+    /// <summary>
+    /// Whether this machine is paging, said plainly enough to close the question.
+    ///
+    /// Worth stating either way. "Maybe it is the page file" is the kind of theory that survives
+    /// indefinitely unless somebody produces a number, and the number is usually no.
+    /// </summary>
+    private string PagingVerdict()
+    {
+        if (CommitLimitBytes <= 0 || TotalMemoryBytes <= 0) return "Paging: could not be read.";
+
+        var pageFile = PageFileBytes > 0 ? PathUtil.HumanBytes(PageFileBytes) : "none";
+
+        if (CommittedBytes < TotalMemoryBytes)
+            return $"Paging: not an issue. {PathUtil.HumanBytes(CommittedBytes)} committed against "
+                   + $"{PathUtil.HumanBytes(TotalMemoryBytes)} of real memory, so it all fits without "
+                   + $"touching the page file (which is {pageFile}).";
+
+        return $"Paging: POSSIBLE. {PathUtil.HumanBytes(CommittedBytes)} committed exceeds "
+               + $"{PathUtil.HumanBytes(TotalMemoryBytes)} of real memory, so some of it is going to "
+               + $"the page file ({pageFile}) and that is slow.";
     }
 
     private static string? RegistryString(string path, string name)
@@ -293,6 +442,19 @@ public sealed class GameStats
     public DateTimeOffset At { get; init; }
 
     /// <summary>
+    /// Chunk game objects: how many separate things the renderer is being handed.
+    ///
+    /// The number that speaks to "is it the base". A plain landscape sits well under a hundred;
+    /// every placed block that is its own object - doors, hatches, electrical, spikes, storage,
+    /// anything with a model rather than a terrain face - adds to this, and a big base pushes it
+    /// up hard. Chunks says how much world is loaded; this says how much of it has to be drawn.
+    /// </summary>
+    public int ChunkObjects { get; init; }
+
+    /// <summary>Dropped items lying in the world. A pile of loot bags is a real cost.</summary>
+    public int Items { get; init; }
+
+    /// <summary>
     /// What the frame rate has actually been doing, not just its last value.
     ///
     /// The last line is the worst one to judge by: the game writes a sample every thirty seconds
@@ -306,18 +468,65 @@ public sealed class GameStats
     public double FpsTypical { get; init; }
     public DateTimeOffset SampledFrom { get; init; }
 
+    /// <summary>
+    /// The frame rate over time, oldest first, as "HH:mm:ss=fps".
+    ///
+    /// A range says how bad it gets; only the shape says WHY. A machine that starts fast and slides
+    /// steadily downwards while nothing in the world changes is a machine getting hot - and that
+    /// looks nothing like a scene that is simply too heavy, which is slow from the first frame and
+    /// stays there. Those two have completely different answers, and the average cannot tell them
+    /// apart.
+    /// </summary>
+    public List<string> FpsOverTime { get; init; } = new();
+
+    /// <summary>Average of the first quarter of the samples against the last quarter.</summary>
+    public double FpsEarly { get; init; }
+    public double FpsLate { get; init; }
+
     public string Describe()
     {
         var last = $"Game: last sample {Fps:0.0} fps at {At.ToLocalTime():HH:mm:ss}  -  "
-                   + $"{Players} player(s), {Zombies} zombies, {Chunks} chunks, memory {RssMb:0} MB";
+                   + $"{Players} player(s), {Zombies} zombies, {Chunks} chunks, "
+                   + $"{ChunkObjects} objects to draw, {Items} loose items, memory {RssMb:0} MB";
 
         if (SampleCount <= 1) return last + "  (one sample only - not worth much)";
 
-        return last + Environment.NewLine
+        var text = last + Environment.NewLine
                + $"      over {SampleCount} samples ({SampledFrom.ToLocalTime():HH:mm:ss}-{At.ToLocalTime():HH:mm:ss}): "
-               + $"typical {FpsTypical:0.0} fps, worst {FpsLow:0.0}, best {FpsHigh:0.0}"
-               + Environment.NewLine
-               + "      (loading and quitting drag the worst down; judge by the typical figure)";
+               + $"typical {FpsTypical:0.0} fps, worst {FpsLow:0.0}, best {FpsHigh:0.0}";
+
+        if (FpsOverTime.Count > 0)
+            text += Environment.NewLine + "      over time: " + string.Join("  ", FpsOverTime);
+
+        if (Shape() is { } shape) text += Environment.NewLine + "      >> " + shape;
+
+        return text;
+    }
+
+    /// <summary>
+    /// What the shape of the frame rate says, as opposed to its average.
+    ///
+    /// Deliberately conservative about calling it: a session that has only just started is still
+    /// loading, and reading a loading dip as a decline would be exactly the kind of confident
+    /// wrong answer this is meant to prevent.
+    /// </summary>
+    public string? Shape()
+    {
+        if (SampleCount < 8 || FpsEarly <= 0 || FpsLate <= 0) return null;
+
+        var drop = (FpsEarly - FpsLate) / FpsEarly;
+
+        if (drop >= 0.4)
+            return $"It STARTED at about {FpsEarly:0.0} fps and is now about {FpsLate:0.0} - it has lost "
+                   + $"{drop * 100:0}% while the world stood still. Something is getting worse over "
+                   + "time, which is what heat looks like and is not what a heavy scene looks like.";
+
+        if (drop <= -0.4)
+            return $"It began at about {FpsEarly:0.0} fps and has climbed to {FpsLate:0.0} - the early "
+                   + "figures were the world still loading, so judge it by the later ones.";
+
+        return $"It has held steady, about {FpsEarly:0.0} fps at the start and {FpsLate:0.0} now. "
+               + "Whatever is limiting it was limiting it from the first frame.";
     }
 
     /// <summary>
@@ -362,8 +571,12 @@ public sealed class GameStats
                 Fps = last.Fps, HeapMb = last.HeapMb, RssMb = last.RssMb,
                 Chunks = last.Chunks, Players = last.Players, Zombies = last.Zombies,
                 Entities = last.Entities, PlayedFor = last.PlayedFor, At = last.At,
+                ChunkObjects = last.ChunkObjects, Items = last.Items,
                 SampleCount = recent.Count,
                 SampledFrom = recent[0].At,
+                FpsOverTime = recent.Select(r => $"{r.At.ToLocalTime():HH:mm:ss}={r.Fps:0.0}").ToList(),
+                FpsEarly = Slice(recent, fromStart: true),
+                FpsLate = Slice(recent, fromStart: false),
                 FpsLow = rates[0],
                 FpsHigh = rates[^1],
                 FpsTypical = rates[rates.Count / 2],   // the middle one, so a loading dip cannot skew it
@@ -385,6 +598,16 @@ public sealed class GameStats
         var buffer = new byte[(int)Math.Min(bytes, fs.Length - start)];
         int read = fs.Read(buffer, 0, buffer.Length);
         return Encoding.UTF8.GetString(buffer, 0, read);
+    }
+
+    /// <summary>Average frame rate over the first or last quarter of a run of samples.</summary>
+    private static double Slice(List<GameStats> samples, bool fromStart)
+    {
+        if (samples.Count == 0) return 0;
+
+        int take = Math.Max(1, samples.Count / 4);
+        var part = fromStart ? samples.Take(take) : samples.TakeLast(take);
+        return part.Average(s => s.Fps);
     }
 
     private static GameStats? Parse(string line, DateTime fileTime)
@@ -415,6 +638,8 @@ public sealed class GameStats
             HeapMb = Number("Heap"),
             RssMb = Number("RSS"),
             Chunks = (int)Number("Chunks"),
+            ChunkObjects = (int)Number("CGO"),
+            Items = (int)Number("Items"),
             Players = (int)Number("Ply"),
             Zombies = (int)Number("Zom"),
             Entities = (int)Number("Ent"),
@@ -446,6 +671,8 @@ public sealed class ProcessUse
     /// still somebody's program, so the answer to "can we free memory" is a suggestion for a
     /// person to weigh, never an action taken on their behalf.
     /// </summary>
+    public static bool IsEssential(string processName) => Windows.Contains(processName);
+
     private static readonly HashSet<string> Windows = new(StringComparer.OrdinalIgnoreCase)
     {
         "System", "Idle", "Registry", "Memory Compression", "smss", "csrss", "wininit", "winlogon",

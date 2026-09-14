@@ -121,7 +121,7 @@ rest of it, and none of them needs a person at the far end to click anything:
 
 | Ask | What happens there |
 |---|---|
-| `get-machine` | CPU, every GPU, memory, commit charge, biggest processes, the game's own frame-rate samples, which save is loaded, and the command line that PC's launcher actually used |
+| `get-machine` | A full account of that PC: see below |
 | `get-log` | That PC's account of what it has been doing |
 | `rename-save` | Renames one save. Nothing copied, nothing deleted |
 | `restart` | Hands over to the installed copy, so a pushed update takes effect |
@@ -129,6 +129,29 @@ rest of it, and none of them needs a person at the far end to click anything:
 | `game-stop` | Asks the game to close. Asked, never killed - it writes the world on the way out |
 | `game-start` | Starts the game, optionally **straight into a named save**, past the spawn screen |
 | `spawn-pref-reset` | Hands back the one setting a remote launch borrows |
+
+### Answering "why is it running badly" from another PC
+
+`get-machine` exists because "it runs badly on the laptop" is not something anybody can act on from
+another house, and walking over to look is the thing this program exists to avoid. It reports:
+
+- **Which chip the game is actually drawing on**, read from the game's own log — the only
+  unambiguous answer on a laptop that has two, and not the same thing as which cards are installed.
+- **The graphics card's clock against its maximum, its power draw, its temperature against its own
+  backing-off threshold**, and what the driver says is holding it back. A card at 100% is only
+  saturated at whatever speed it is currently *allowed* to run.
+- **Frame rate over time**, not just an average. A machine that starts fast and slides downwards
+  while the world stands still is getting hot; a scene that is genuinely too heavy is slow from the
+  first frame and stays there. The average cannot tell those apart and they have opposite answers.
+- **Processor use per process**, over a measured window — a different list from the memory one.
+- **Whether it is paging**, said plainly either way, because "maybe it's the page file" is a theory
+  that survives indefinitely until somebody produces a number.
+- **Whether a laptop is on battery**, and the Windows power plan.
+- **The game's graphics settings**, as raw numbers rather than invented labels.
+
+This was built to settle one real argument and did: a laptop blamed on its base turned out to be
+running its graphics card at 300 MHz of 2100 at 83C, going from 45.8 fps to a flat 8.5 over fifteen
+minutes while the player stood still in the same base.
 
 ### Starting a named save from another PC
 

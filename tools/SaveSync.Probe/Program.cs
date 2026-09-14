@@ -13,6 +13,7 @@ using SaveSync.Core;
 //   probe launch   [world] [saveName]               - start the game HERE, in that save
 //   probe launchplan [world] [saveName]             - print what a launch would run, start nothing
 //   probe spawnreset [seconds] [who]                - give back the borrowed spawn-screen setting
+//   probe here                                      - the full machine report for THIS PC
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 
@@ -53,6 +54,7 @@ try
         case "launch": Launch(Arg(1), Arg(2), dryRun: false); break;
         case "launchplan": Launch(Arg(1), Arg(2), dryRun: true); break;
         case "spawnreset": SpawnReset(int.TryParse(Arg(1), out var zw) ? zw : 8, Arg(2)); break;
+        case "here": Console.WriteLine(MachineReport.Read(GamePaths.Discover()).Describe()); break;
         default:
             Console.WriteLine($"unknown command: {cmd}");
             return 2;
