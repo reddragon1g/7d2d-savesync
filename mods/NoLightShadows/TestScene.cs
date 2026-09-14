@@ -50,14 +50,21 @@ public static class TestScene
     /// In front rather than around them, because a room built on top of somebody buries them in
     /// stone - and a screenshot taken from inside a solid block is not a useful photograph.
     /// </summary>
-    public static void Build(World world, Vector3 playerPos, Vector3 facing)
+    public static void Build(World world, EntityPlayerLocal player)
     {
         if (_built) return;
         _built = true;
 
-        var flat = new Vector3(facing.x, 0f, facing.z);
-        if (flat.sqrMagnitude < 0.01f) flat = Vector3.forward;
-        flat.Normalize();
+        // Midnight, because in daylight this test means nothing: the sun lights the outside of the
+        // room far more brightly than any candle could, and "is that wall lit" stops having an
+        // answer. The first attempt at this was photographed at midday and showed nothing at all.
+        world.SetTimeJump(GameUtils.DayTimeToWorldTime(2, 0, 0));
+
+        var playerPos = player.position;
+
+        // Straight out along +Z rather than wherever the player happens to face, so the room's
+        // position is known in advance and the camera can be pointed at it.
+        var flat = Vector3.forward;
 
         // Far enough that the whole room is in shot, near enough to see detail on the near wall.
         var centre = playerPos + flat * 9f;
@@ -104,8 +111,15 @@ public static class TestScene
         // The light, on the floor in the middle, away from every wall.
         world.SetBlock(new Vector3i(cx, cy + 1, cz), light, true, true);
 
+        // Face the room, and stand far enough back to see all of it. Without this the camera
+        // points wherever the player happened to spawn looking, which the first attempt proved
+        // is usually at a building somewhere else entirely.
+        player.SetPosition(new Vector3(cx + 0.5f, cy + 1.5f, cz - 9f));
+        player.SetRotationAndStopTurning(new Vector3(0f, 0f, 0f));
+
         Log.Out($"[NoLightShadows] test room built: doorway at {doorX}, {cy + 1}, {doorZ}, "
                 + $"candle at {cx}, {cy + 1}, {cz}");
+        Log.Out("[NoLightShadows] midnight, camera placed facing the doorway");
         Log.Out("[NoLightShadows] expected: light spills from the doorway, the outside walls stay dark");
     }
 }
