@@ -348,6 +348,18 @@ public static class GameLauncher
         {
             foreach (var setting in profile)
             {
+                // A name already starting with a dash is a raw player argument - "-window-mode
+                // borderless" - rather than one of the game's own "-Name=Value" preferences. Some
+                // things are not preferences at all: the window mode belongs to Unity, not to the
+                // game, so it can only be set this way.
+                if (setting.Pref.StartsWith('-'))
+                {
+                    args = StripArg(args, setting.Pref, takesValue: true);
+                    args.Add(setting.Pref);
+                    if (setting.Value.Length > 0) args.Add(setting.Value);
+                    continue;
+                }
+
                 args = StripArg(args, $"-{setting.Pref}=", takesValue: false);
                 args.Add($"-{setting.Pref}={setting.Value}");
             }

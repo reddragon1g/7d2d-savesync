@@ -224,6 +224,16 @@ public static class GameTuning
         new("OptionsGfxVsync", "2", "lock to 30 fps, tear-free, for half the work of 60"),
         new("OptionsGfxLimitFpsInGame", "30", "and a frame cap as well, for if vsync is ever turned off"),
 
+        // Borderless fullscreen, and these are raw Unity arguments rather than game preferences
+        // because the window mode is not one: XUiC_OptionsVideo reads it from
+        // PlatformApplicationManager.Application.ScreenOptions, which is Unity's own screen state.
+        //
+        // It matters more than it sounds. Launched windowed at the screen's exact resolution, the
+        // title bar and borders push the picture off the edges and take the edges of the interface
+        // with them - the game runs perfectly and parts of the HUD are simply not on the screen.
+        new("-screen-fullscreen", "1", "fullscreen rather than a window"),
+        new("-window-mode", "borderless", "borderless, so no title bar pushes the interface off screen"),
+
         // The lighting, back to this PC's own settings. This is what the margin is being spent on.
         new("OptionsGfxShadowQuality", "1", "shadows ON at their cheapest tier - as this PC had them"),
         new("OptionsGfxShadowDistance", "0", "close-range only, which is where the cost of shadows is"),
