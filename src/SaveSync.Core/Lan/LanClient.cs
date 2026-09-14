@@ -180,7 +180,12 @@ public sealed class LanClient
             return (false, "Could not read the program file: " + e.Message);
         }
 
-        var version = RemoteUpdate.RunningVersion.ToString();
+        // The version of the FILE, not of whoever is sending it.
+        var offered = RemoteUpdate.VersionOf(exePath);
+        if (offered <= new Version(0, 0))
+            return (false, "That program file does not say what version it is.");
+
+        var version = offered.ToString();
 
         try
         {

@@ -364,9 +364,7 @@ public class LanTests : IDisposable
         // defensible for handing over something that will be run. So this needs its own yes.
         Assert.False(_receiver.Config.AllowRemoteUpdate);
 
-        var exe = Path.Combine(_sender.Root, "pretend.exe");
-        File.WriteAllBytes(exe, new byte[] { 1, 2, 3, 4 });
-
+        var exe = AVersionedProgram();
         var peer = StartReceiver();
         var result = await new LanClient(_sender.Config).PushUpdateAsync(peer, exe, "Ryan");
 
@@ -380,9 +378,7 @@ public class LanTests : IDisposable
         // Otherwise a stale copy on somebody's stick could walk a PC backwards.
         _receiver.Config.AllowRemoteUpdate = true;
 
-        var exe = Path.Combine(_sender.Root, "pretend.exe");
-        File.WriteAllBytes(exe, new byte[] { 1, 2, 3, 4 });
-
+        var exe = AVersionedProgram();
         var peer = StartReceiver();
 
         // Both sides are this same assembly, so the offered version equals the installed one -
@@ -434,6 +430,43 @@ public class LanTests : IDisposable
         var staged = await RemoteUpdate.ReceiveAsync(ws, half, declaredBytes: 100, "any-hash");
 
         Assert.Null(staged);
+    }
+
+    /// <summary>
+    /// A real file that carries a version, for tests about version rules.
+    ///
+    /// The test assembly itself will do: what matters is that Windows can read a version out of
+    /// it, which a handful of made-up bytes cannot - and a file with no version is now refused
+    /// before any version rule is reached.
+    /// </summary>
+    private static string AVersionedProgram() => typeof(LanTests).Assembly.Location;
+
+    [Fact]
+    public async Task A_file_that_does_not_say_what_version_it_is_is_refused()
+    {
+        // The offer describes the FILE, so a file that cannot describe itself cannot be offered.
+        // Sending the sender's own version instead was a real fault: a tool built from an older
+        // checkout offered "1.4.1" while handing over a 1.5.2 program, and the receiving PC
+        // correctly refused the very fix that would have stopped it wedging.
+        _receiver.Config.AllowRemoteUpdate = true;
+
+        var nonsense = Path.Combine(_sender.Root, "pretend.exe");
+        File.WriteAllBytes(nonsense, new byte[] { 1, 2, 3, 4 });
+
+        var peer = StartReceiver();
+        var result = await new LanClient(_sender.Config).PushUpdateAsync(peer, nonsense, "Ryan");
+
+        Assert.False(result.Sent);
+        Assert.Contains("does not say what version", result.Message);
+    }
+
+    [Fact]
+    public void The_version_offered_is_the_files_own_version()
+    {
+        var mine = RemoteUpdate.VersionOf(AVersionedProgram());
+
+        Assert.NotEqual(new Version(0, 0), mine);
+        Assert.Equal(RemoteUpdate.RunningVersion.ToString(3), mine.ToString(3));
     }
 
     // ------------------------------------------------ deciding from another machine, safely

@@ -38,6 +38,28 @@ public static class RemoteUpdate
         typeof(RemoteUpdate).Assembly.GetName().Version ?? new Version(0, 0);
 
     /// <summary>
+    /// The version of the program FILE being offered - which is not the same thing as the version
+    /// of whatever is doing the offering.
+    ///
+    /// Sending the sender's own version was wrong in the way that matters: a tool built from an
+    /// older checkout offered "1.4.1" while handing over a 1.5.2 executable, the receiving PC
+    /// correctly refused it as not newer, and the fix it was refusing was the one that would have
+    /// stopped it wedging. Ask the file.
+    /// </summary>
+    public static Version VersionOf(string exePath)
+    {
+        try
+        {
+            var info = System.Diagnostics.FileVersionInfo.GetVersionInfo(exePath);
+            return Version.TryParse(info.FileVersion, out var v) ? v : new Version(0, 0);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or FileNotFoundException)
+        {
+            return new Version(0, 0);
+        }
+    }
+
+    /// <summary>
     /// Clears out staged programs from previous attempts, best effort.
     ///
     /// One that cannot be deleted is stepped over rather than treated as a failure - that is the
