@@ -155,9 +155,29 @@ internal static class Program
 
         var store = ProfileStore.Load();
 
-        // Started with Windows and we already know who it was last time: straight to the tray, no
-        // questions. Otherwise ask who is using it, which is always the first thing they see.
-        var profile = background ? store.ById(config.LastProfileId) ?? store.Profiles.FirstOrDefault() : null;
+        // Started with Windows, or started by a copy handing over to this one: we already know who
+        // it is, so do not ask. Otherwise ask, which is always the first thing a person sees.
+        //
+        // A handover that stopped to ask was the whole failure. Nobody is standing there to answer
+        // it - the copy that launched this one has already gone - so the question sits unanswered
+        // on the screen, the main window is never created, and with it neither is the listener.
+        // The PC then looks perfectly healthy to anybody walking past and is unreachable from
+        // everywhere, which is exactly how it appeared.
+        bool handingOver = Has("--handover");
+
+        var profile = background || handingOver
+            ? store.ById(config.LastProfileId) ?? store.Profiles.FirstOrDefault()
+            : null;
+
+        if (profile is null && handingOver)
+        {
+            // Handed over to, and there is genuinely nobody on record. Asking is still wrong -
+            // nobody is there - so carry on as whoever this machine is and let the person choose
+            // later from the window. Being reachable matters more than being correctly labelled.
+            profile = store.Add(Machine.User);
+            config.LastProfileId = profile.Id;
+            try { store.Save(); config.Save(); } catch (IOException) { }
+        }
 
         if (profile is null)
         {
