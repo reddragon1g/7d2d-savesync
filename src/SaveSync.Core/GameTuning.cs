@@ -136,9 +136,17 @@ public static class GameTuning
         new("OptionsGfxVsync", "2", "lock to 30 fps, tear-free, for half the work of 60"),
         new("OptionsGfxLimitFpsInGame", "30", "and a frame cap as well, for if vsync is ever turned off"),
 
-        // Cheap on a graphics card, and most of what the eye actually notices.
-        new("OptionsGfxTexQuality", "1", "near-best textures - costs memory, not time, and there is memory spare"),
-        new("OptionsGfxTexFilter", "2", "proper texture filtering"),
+        // Memory, not time - which is exactly the currency to spend when the constraint is heat.
+        // Texture quality is a mipmap limit: ApplyTextureQuality assigns it straight to
+        // GameRenderManager.TextureMipmapLimit, where 0 means no reduction at all. It costs video
+        // memory to hold the full-size textures and nothing whatsoever per frame to draw them, and
+        // there were 3.2 GB of the card's 6 sitting unused.
+        //
+        // (OptionsGfxStreamMipmaps looks like it belongs here and does not: ApplyTextureQuality
+        // hard-codes streamingMipmapsActive to true and never reads that preference. Setting it
+        // would have changed nothing while looking like it had.)
+        new("OptionsGfxTexQuality", "0", "FULL-size textures - pure video memory, free per frame"),
+        new("OptionsGfxTexFilter", "3", "maximum anisotropic filtering - bandwidth, not arithmetic"),
         new("OptionsGfxObjQuality", "2", "object detail back to what this PC had"),
         new("OptionsGfxTerrainQuality", "2", "terrain back to what this PC had"),
         new("OptionsGfxTreeDistance", "2", "trees visible again, but not to the horizon"),
@@ -197,7 +205,12 @@ public static class GameTuning
     {
         new("DynamicMeshMaxRegionCache", "3", "keep 3 regions of base meshes, not 1 - the most the game allows"),
         new("DynamicMeshMaxItemCache", "6", "keep 6 item caches, not 3 - again the maximum"),
-        new("DynamicMeshUseImposters", "true", "simplified stand-ins for distant parts of the base"),
+
+        // Imposters are simplified stand-ins for distant parts of the base. They were in here to
+        // save work, and they are out again on the same reasoning that raised the textures: the
+        // constraint on this machine is heat, memory is what it has spare, and paying for detail
+        // in memory costs nothing per frame. It was also already this PC's own setting.
+        new("DynamicMeshUseImposters", "false", "full detail on the base, held in the memory that is going spare"),
     };
 
     public const string NoDymesh = "nodymesh";
