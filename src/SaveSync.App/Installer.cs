@@ -148,9 +148,18 @@ public static class Installer
         // cleaned up on the next launch.
         if (File.Exists(InstalledExe) && !PathUtil.SamePath(source, InstalledExe))
         {
-            var stale = InstalledExe + ".old";
-            try { File.Delete(stale); } catch (IOException) { }
-            try { File.Move(InstalledExe, stale, overwrite: true); } catch (IOException) { }
+            // A unique name, and never a failure if an old one cannot be removed.
+            //
+            // The file moved aside IS the previously running program, and Windows keeps a running
+            // executable's image locked - so the copy doing the update cannot delete the copy it
+            // just became. With one fixed name that lock blocked every future install on the
+            // machine, and it did: two updates were refused outright with "access to
+            // SaveSync.exe.old is denied" - an error the catch here did not even cover, because it
+            // only caught IOException and this arrives as UnauthorizedAccessException.
+            SweepOldExecutables();
+
+            var stale = $"{InstalledExe}.{DateTime.UtcNow:yyyyMMddHHmmss}.old";
+            File.Move(InstalledExe, stale);
         }
 
         if (!PathUtil.SamePath(source, InstalledExe))
@@ -251,11 +260,27 @@ public static class Installer
         }
     }
 
-    /// <summary>Removes the previous executable left behind by an update.</summary>
-    public static void CleanupAfterUpdate()
+    /// <summary>Removes previous executables left behind by updates. Best effort throughout.</summary>
+    public static void CleanupAfterUpdate() => SweepOldExecutables();
+
+    /// <summary>
+    /// Clears aside-moved executables, stepping over any that are still locked.
+    ///
+    /// One that cannot be deleted is almost certainly still running - which is exactly why the
+    /// name must not be reused, and exactly why failing to delete it must not fail anything.
+    /// </summary>
+    private static void SweepOldExecutables()
     {
-        var stale = InstalledExe + ".old";
-        try { if (File.Exists(stale)) File.Delete(stale); }
+        try
+        {
+            if (!Directory.Exists(InstallDir)) return;
+
+            foreach (var file in Directory.GetFiles(InstallDir, "SaveSync.exe*.old"))
+            {
+                try { File.Delete(file); }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+            }
+        }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
     }
 
