@@ -1025,6 +1025,65 @@ public sealed class TransferEngine
         return notes;
     }
 
+    /// <summary>
+    /// Gives a save a different name, keeping everything else about it.
+    ///
+    /// A rename and nothing else: the folder is moved, the passport is told its new name, and the
+    /// identity is left alone so both machines go on recognising it as the same save. Nothing is
+    /// copied, nothing is deleted, and the old name is written down so it can be put back by hand.
+    ///
+    /// This exists because two people can start a world, accept the default name, and end up
+    /// unable to hold both - and the answer to that is not for one of them to lose a save, it is
+    /// for the names to stop colliding.
+    /// </summary>
+    public SaveSlot Rename(SaveSlot slot, string newName)
+    {
+        var blockers = GlobalBlockers();
+        if (blockers.Count > 0) throw new TransferBlockedException(blockers);
+
+        var clean = PathUtil.Sanitize((newName ?? "").Trim());
+        if (clean.Length == 0)
+            throw new InvalidOperationException("A name is needed.");
+
+        if (string.Equals(clean, slot.SaveName, StringComparison.OrdinalIgnoreCase))
+            return slot;
+
+        var parent = Path.GetDirectoryName(slot.Folder)
+                     ?? throw new InvalidOperationException("That save is not where it should be.");
+        var target = Path.Combine(parent, clean);
+
+        if (Directory.Exists(target))
+            throw new TransferBlockedException(new List<Finding>
+            {
+                new(Severity.Blocker, $"There is already a save called \"{clean}\" in {slot.World}."),
+            });
+
+        lock (MutationGate)
+        {
+            // Re-checked inside the gate: renaming a folder the game has open is the same mistake
+            // as copying one, and checking before waiting for the lock proves nothing.
+            if (IsGameRunningProbe())
+                throw new TransferBlockedException(GlobalBlockers());
+
+            Directory.Move(slot.Folder, target);
+
+            var passport = Passport.Load(target);
+            if (passport is not null)
+            {
+                // The identity is deliberately untouched - only the name changes, so the other PC
+                // still recognises it as the same save and keeps updating it.
+                passport.SaveName = clean;
+                passport.Save(target);
+            }
+
+            ActivityLog.Write($"renamed  {slot.SaveName} ({slot.World})  ->  {clean}   "
+                + $"(folder moved, nothing copied or deleted)");
+        }
+
+        return SaveDiscovery.Find(Location, slot.World, clean)
+               ?? throw new InvalidOperationException("The save could not be found after renaming it.");
+    }
+
     public SaveSlot? FindLocal(Passport incoming)
     {
         var all = SaveDiscovery.Enumerate(Location, measure: true);

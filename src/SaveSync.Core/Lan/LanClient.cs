@@ -232,6 +232,44 @@ public sealed class LanClient
         }
     }
 
+    /// <summary>Asks another PC to rename one of its saves. Nothing is copied or deleted.</summary>
+    public async Task<(bool Ok, string Message)> RenameSaveAsync(
+        LanPeer peer, string world, string saveName, string newName, string senderName,
+        CancellationToken ct = default)
+    {
+        if (!await EnsurePairedAsync(peer, senderName, ct).ConfigureAwait(false))
+            return (false, $"Could not reach {peer.Label}.");
+
+        var secret = _config.FindPeer(peer.MachineId)?.Secret;
+        if (secret is null) return (false, $"Not paired with {peer.Label}.");
+
+        try
+        {
+            using var client = await ConnectAsync(peer.Address, peer.Port, ct).ConfigureAwait(false);
+            await using var stream = client.GetStream();
+
+            await LanProtocol.WriteMessageAsync(stream, new LanRequest
+            {
+                Op = "rename-save",
+                Secret = secret,
+                MachineId = _config.MachineId,
+                DisplayName = _config.DisplayName,
+                SenderName = senderName,
+                World = world,
+                SaveName = saveName,
+                InstallAsName = newName,
+            }, ct: ct).ConfigureAwait(false);
+
+            var response = await LanProtocol.ReadHeaderAsync<LanResponse>(stream, ct).ConfigureAwait(false);
+            if (response is null) return (false, $"{peer.Label} did not answer.");
+            return (response.Ok, response.Ok ? response.Message ?? "Done." : response.Error ?? "Refused.");
+        }
+        catch (Exception e) when (e is IOException or SocketException or OperationCanceledException)
+        {
+            return (false, e.Message);
+        }
+    }
+
     /// <summary>Asks another PC to hand over to its installed copy, so an update takes effect.</summary>
     public async Task<(bool Ok, string Message)> RestartAsync(
         LanPeer peer, string senderName, CancellationToken ct = default)

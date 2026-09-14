@@ -137,7 +137,7 @@ public sealed class LanServer : IDisposable
                     // waiting for a second request that was never coming.
                     if (request.Op is "hello" or "pair" or "list-saves" or "request-send"
                         or "get-log" or "update-offer" or "update-file"
-                        or "inbox-list" or "inbox-keep-both" or "restart") return;
+                        or "inbox-list" or "inbox-keep-both" or "restart" or "rename-save") return;
                 }
             }
             catch (OperationCanceledException) { }
@@ -175,6 +175,7 @@ public sealed class LanServer : IDisposable
             "inbox-list" => InboxList(),
             "inbox-keep-both" => InboxKeepBoth(request),
             "restart" => Restart(request),
+            "rename-save" => RenameSave(request),
             "update-offer" => UpdateOffer(request),
             "update-file" => await UpdateFileAsync(request, stream, ct).ConfigureAwait(false),
             "request-send" => RequestSend(request, address),
@@ -223,6 +224,45 @@ public sealed class LanServer : IDisposable
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             return LanResponse.Fail("Could not read this PC's log: " + e.Message);
+        }
+    }
+
+    /// <summary>
+    /// Renames a save on this PC.
+    ///
+    /// Safe to allow from elsewhere for the same reason keeping both is: it cannot lose anything.
+    /// A folder is moved, its identity is kept so both machines go on treating it as one save, and
+    /// a name that is already taken is refused rather than merged into.
+    /// </summary>
+    private LanResponse RenameSave(LanRequest request)
+    {
+        var engine = _engineProvider();
+        if (engine is null) return LanResponse.Fail("This PC is not set up yet.");
+
+        if (string.IsNullOrWhiteSpace(request.World) || string.IsNullOrWhiteSpace(request.SaveName))
+            return LanResponse.Fail("No save was named.");
+        if (string.IsNullOrWhiteSpace(request.InstallAsName))
+            return LanResponse.Fail("No new name was given.");
+
+        var slot = SaveDiscovery.Find(engine.Location, request.World!, request.SaveName!);
+        if (slot is null)
+            return LanResponse.Fail($"There is no save called \"{request.SaveName}\" in {request.World} on this PC.");
+
+        try
+        {
+            var renamed = engine.Rename(slot, request.InstallAsName!);
+            return new LanResponse
+            {
+                Ok = true,
+                Applied = true,
+                Message = $"\"{request.SaveName}\" is now called \"{renamed.SaveName}\". "
+                          + "Nothing was copied or deleted.",
+            };
+        }
+        catch (TransferBlockedException ex) { return LanResponse.Fail(ex.Message); }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            return LanResponse.Fail(ex.Message);
         }
     }
 

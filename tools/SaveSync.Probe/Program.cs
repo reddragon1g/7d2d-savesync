@@ -41,6 +41,7 @@ try
         case "relay": Relay(At(1), At(2), At(3), At(4), At(5)); break;
         case "inbox": Inbox_(int.TryParse(Arg(1), out var iw) ? iw : 8, Arg(2)); break;
         case "restart": RestartPeer(int.TryParse(Arg(1), out var rw) ? rw : 8, Arg(2)); break;
+        case "peersaves": PeerSaves(int.TryParse(Arg(1), out var sw) ? sw : 8, Arg(2)); break;
         case "keepboth": KeepBoth(int.TryParse(Arg(1), out var kw) ? kw : 8, At(2), At(3), Arg(4)); break;
         case "import": Import(At(1), At(2), Arg(3) ?? "apply"); break;
         default:
@@ -231,6 +232,37 @@ void Relay(string userData, string fromName, string toName, string world, string
     Console.WriteLine(sent.Sent
         ? $"delivered. {to.DisplayName} says: {sent.Message}"
         : $"not delivered: {sent.Message}");
+}
+
+/// <summary>Every save each PC holds, as that PC describes it. Works on older copies too.</summary>
+void PeerSaves(int seconds, string? which)
+{
+    var config = AppConfig.Load();
+    using var discovery = new SaveSync.Core.Lan.Discovery(config) { PersonName = "probe" };
+    discovery.Start();
+    Thread.Sleep(TimeSpan.FromSeconds(seconds));
+
+    var peers = discovery.Peers
+        .Where(p => which is null || p.DisplayName.Contains(which, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    if (peers.Count == 0) { Console.WriteLine("no other PC answered."); return; }
+
+    var client = new SaveSync.Core.Lan.LanClient(config);
+    foreach (var peer in peers)
+    {
+        Console.WriteLine($"================ {peer.DisplayName} at {peer.Address} ================");
+        var saves = client.ListSavesAsync(peer, "probe").GetAwaiter().GetResult();
+        if (saves is null) { Console.WriteLine("  no answer."); continue; }
+
+        foreach (var sv in saves.OrderByDescending(x => x.SizeBytes))
+        {
+            Console.WriteLine($"  {sv.SaveName,-26} {sv.World,-18} {PathUtil.HumanBytes(sv.SizeBytes)}"
+                + $"  last played {sv.LastPlayedAt.ToLocalTime():yyyy-MM-dd HH:mm}"
+                + $"  {(sv.Passport is null ? "never copied" : "id " + sv.SaveId[..8])}");
+        }
+        Console.WriteLine();
+    }
 }
 
 /// <summary>Asks a PC to hand over to its installed copy, so an update takes effect.</summary>

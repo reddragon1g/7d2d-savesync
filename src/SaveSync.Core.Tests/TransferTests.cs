@@ -985,4 +985,85 @@ public class TransferTests : IDisposable
         Assert.Equal(TestEnv.PlayerIds.Length,
             Directory.GetFiles(Path.Combine(added.Folder, "Player"), "*.ttp").Length);
     }
+
+    // ---------------------------------------------------------------- renaming, losing nothing
+
+    [Fact]
+    public void Renaming_keeps_every_byte_and_the_saves_identity()
+    {
+        // The whole point: two people accepted the same default name, and the answer is not for
+        // one of them to lose a save - it is for the names to stop colliding. So the contents must
+        // survive untouched, and the identity must survive too, or the other PC stops recognising
+        // it and starts treating its updates as a stranger.
+        _desktop.MakeSave(saveName: "My Game");
+        var slot = _desktop.AdoptedSlot(saveName: "My Game");
+        var before = Manifest.Build(slot.Folder);
+        var id = slot.Passport!.SaveId;
+
+        var renamed = _desktop.NewEngine().Rename(slot, "My Game (Chris)");
+
+        Assert.Equal("My Game (Chris)", renamed.SaveName);
+        Assert.Empty(before.Verify(renamed.Folder));
+        Assert.Equal(id, renamed.Passport!.SaveId);
+        Assert.Equal("My Game (Chris)", renamed.Passport.SaveName);
+
+        // And the old folder is gone, not left as a duplicate.
+        Assert.Null(SaveDiscovery.Find(_desktop.Location, "Navezgane", "My Game"));
+    }
+
+    [Fact]
+    public void A_renamed_save_still_matches_its_own_updates_from_the_other_pc()
+    {
+        // Backwards compatible on purpose. The other machine still sends the same save id, so a
+        // later version has to land on the renamed folder rather than being treated as a stranger.
+        _desktop.MakeSave(saveName: "My Game");
+        ImportInto(_laptop, ExportFrom(_desktop, save: "My Game"));
+
+        // The laptop renames its copy to something that does not clash.
+        var laptopEngine = _laptop.NewEngine();
+        laptopEngine.Rename(_laptop.Slot(saveName: "My Game"), "My Game (Chris)");
+
+        // He plays and sends again.
+        _desktop.Play(_desktop.Slot(saveName: "My Game").Folder, seed: 303);
+        var next = ExportFrom(_desktop, save: "My Game");
+
+        var plan = _laptop.NewEngine().Inspect(next);
+
+        Assert.Equal(Relation.FastForward, plan.Relation);
+        Assert.Equal(
+            PathUtil.Normalize(_laptop.Slot(saveName: "My Game (Chris)").Folder),
+            PathUtil.Normalize(plan.TargetFolder));
+    }
+
+    [Fact]
+    public void Renaming_onto_a_name_that_is_taken_is_refused()
+    {
+        _desktop.MakeSave(saveName: "My Game");
+        _desktop.MakeSave(saveName: "Taken", seed: 4);
+        var taken = Manifest.Build(_desktop.Slot(saveName: "Taken").Folder);
+
+        var engine = _desktop.NewEngine();
+        Assert.Throws<TransferBlockedException>(() => engine.Rename(_desktop.Slot(saveName: "My Game"), "Taken"));
+
+        // Both saves still there, both untouched.
+        Assert.NotNull(SaveDiscovery.Find(_desktop.Location, "Navezgane", "My Game"));
+        Assert.Empty(taken.Verify(_desktop.Slot(saveName: "Taken").Folder));
+    }
+
+    [Fact]
+    public void A_save_is_never_renamed_while_the_game_is_running()
+    {
+        _desktop.MakeSave(saveName: "My Game");
+        var engine = _desktop.NewEngine();
+
+        TransferEngine.IsGameRunningProbe = () => true;
+        try
+        {
+            Assert.Throws<TransferBlockedException>(
+                () => engine.Rename(_desktop.Slot(saveName: "My Game"), "Something Else"));
+        }
+        finally { TransferEngine.IsGameRunningProbe = () => false; }
+
+        Assert.NotNull(SaveDiscovery.Find(_desktop.Location, "Navezgane", "My Game"));
+    }
 }
