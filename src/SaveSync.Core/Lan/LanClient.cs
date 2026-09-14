@@ -232,6 +232,71 @@ public sealed class LanClient
         }
     }
 
+    /// <summary>Asks another PC to hand over to its installed copy, so an update takes effect.</summary>
+    public async Task<(bool Ok, string Message)> RestartAsync(
+        LanPeer peer, string senderName, CancellationToken ct = default)
+    {
+        var response = await SimpleAsync(peer, "restart", senderName, null, null, ct).ConfigureAwait(false);
+        if (response is null) return (false, $"{peer.Label} did not answer.");
+        return (response.Ok, response.Ok ? response.Message ?? "Restarting." : response.Error ?? "Refused.");
+    }
+
+    /// <summary>What is waiting for a person on another PC.</summary>
+    public async Task<List<WaitingSave>?> InboxAsync(LanPeer peer, string senderName, CancellationToken ct = default)
+    {
+        var response = await SimpleAsync(peer, "inbox-list", senderName, null, null, ct).ConfigureAwait(false);
+        if (response is null || !response.Ok || response.InboxJson is null) return null;
+        return Json.Read<List<WaitingSave>>(response.InboxJson);
+    }
+
+    /// <summary>
+    /// Asks another PC to install a waiting save beside what it already has, under a new name.
+    ///
+    /// The only decision that can be made remotely, because it is the only one that cannot cost
+    /// anything: nothing on that machine is replaced, renamed or removed.
+    /// </summary>
+    public async Task<(bool Ok, string Message)> KeepBothAsync(
+        LanPeer peer, string inboxId, string? installAs, string senderName, CancellationToken ct = default)
+    {
+        var response = await SimpleAsync(peer, "inbox-keep-both", senderName, inboxId, installAs, ct)
+            .ConfigureAwait(false);
+
+        if (response is null) return (false, $"{peer.Label} did not answer.");
+        return (response.Ok, response.Ok ? response.Message ?? "Done." : response.Error ?? "Refused.");
+    }
+
+    /// <summary>One request, one answer, no body. Shared by the small operations.</summary>
+    private async Task<LanResponse?> SimpleAsync(
+        LanPeer peer, string op, string senderName, string? inboxId, string? installAs, CancellationToken ct)
+    {
+        if (!await EnsurePairedAsync(peer, senderName, ct).ConfigureAwait(false)) return null;
+        var secret = _config.FindPeer(peer.MachineId)?.Secret;
+        if (secret is null) return null;
+
+        try
+        {
+            using var client = await ConnectAsync(peer.Address, peer.Port, ct).ConfigureAwait(false);
+            await using var stream = client.GetStream();
+
+            await LanProtocol.WriteMessageAsync(stream, new LanRequest
+            {
+                Op = op,
+                Secret = secret,
+                MachineId = _config.MachineId,
+                DisplayName = _config.DisplayName,
+                SenderName = senderName,
+                InboxId = inboxId,
+                InstallAsName = installAs,
+            }, ct: ct).ConfigureAwait(false);
+
+            return await LanProtocol.ReadHeaderAsync<LanResponse>(stream, ct).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is IOException or SocketException or OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
     public async Task<List<PeerSave>?> ListSavesAsync(LanPeer peer, string senderName, CancellationToken ct = default)
     {
         if (!await EnsurePairedAsync(peer, senderName, ct).ConfigureAwait(false)) return null;

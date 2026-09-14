@@ -39,6 +39,9 @@ try
         case "peerlog": PeerLog(int.TryParse(Arg(1), out var wait) ? wait : 8, Arg(2)); break;
         case "pushupdate": PushUpdate(At(1), int.TryParse(Arg(2), out var w2) ? w2 : 8, Arg(3)); break;
         case "relay": Relay(At(1), At(2), At(3), At(4), At(5)); break;
+        case "inbox": Inbox_(int.TryParse(Arg(1), out var iw) ? iw : 8, Arg(2)); break;
+        case "restart": RestartPeer(int.TryParse(Arg(1), out var rw) ? rw : 8, Arg(2)); break;
+        case "keepboth": KeepBoth(int.TryParse(Arg(1), out var kw) ? kw : 8, At(2), At(3), Arg(4)); break;
         case "import": Import(At(1), At(2), Arg(3) ?? "apply"); break;
         default:
             Console.WriteLine($"unknown command: {cmd}");
@@ -228,6 +231,83 @@ void Relay(string userData, string fromName, string toName, string world, string
     Console.WriteLine(sent.Sent
         ? $"delivered. {to.DisplayName} says: {sent.Message}"
         : $"not delivered: {sent.Message}");
+}
+
+/// <summary>Asks a PC to hand over to its installed copy, so an update takes effect.</summary>
+void RestartPeer(int seconds, string? which)
+{
+    var config = AppConfig.Load();
+    using var discovery = new SaveSync.Core.Lan.Discovery(config) { PersonName = "probe" };
+    discovery.Start();
+    Thread.Sleep(TimeSpan.FromSeconds(seconds));
+
+    var peers = discovery.Peers
+        .Where(p => which is null || p.DisplayName.Contains(which, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    if (peers.Count == 0) { Console.WriteLine("no other PC answered."); return; }
+
+    var client = new SaveSync.Core.Lan.LanClient(config);
+    foreach (var peer in peers)
+    {
+        var r = client.RestartAsync(peer, "probe").GetAwaiter().GetResult();
+        Console.WriteLine($"  {peer.DisplayName,-18} {(r.Ok ? "OK" : "refused")} - {r.Message}");
+    }
+}
+
+/// <summary>What is waiting for a person on the other PCs.</summary>
+void Inbox_(int seconds, string? which)
+{
+    var config = AppConfig.Load();
+    using var discovery = new SaveSync.Core.Lan.Discovery(config) { PersonName = "probe" };
+    discovery.Start();
+    Thread.Sleep(TimeSpan.FromSeconds(seconds));
+
+    var peers = discovery.Peers
+        .Where(p => which is null || p.DisplayName.Contains(which, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    if (peers.Count == 0) { Console.WriteLine("no other PC answered."); return; }
+
+    var client = new SaveSync.Core.Lan.LanClient(config);
+    foreach (var peer in peers)
+    {
+        Console.WriteLine($"================ {peer.DisplayName} ================");
+        var waiting = client.InboxAsync(peer, "probe").GetAwaiter().GetResult();
+
+        if (waiting is null) { Console.WriteLine("  no answer."); continue; }
+        if (waiting.Count == 0) { Console.WriteLine("  nothing waiting."); continue; }
+
+        foreach (var w in waiting)
+        {
+            Console.WriteLine($"  id      : {w.Id}");
+            Console.WriteLine($"  save    : {w.Display}   day {w.Day}, {w.Players} players, "
+                + $"{PathUtil.HumanBytes(w.Bytes)}");
+            Console.WriteLine($"  from    : {w.FromName}   received {w.ReceivedAt.ToLocalTime():HH:mm}");
+            Console.WriteLine($"  waiting : {w.Relation} - {w.Why}");
+            Console.WriteLine($"  suggest : {w.SuggestedName}");
+            Console.WriteLine();
+        }
+    }
+}
+
+/// <summary>Tells a PC to install a waiting save beside what it has, under a new name.</summary>
+void KeepBoth(int seconds, string which, string inboxId, string? name)
+{
+    var config = AppConfig.Load();
+    using var discovery = new SaveSync.Core.Lan.Discovery(config) { PersonName = "probe" };
+    discovery.Start();
+    Thread.Sleep(TimeSpan.FromSeconds(seconds));
+
+    var peer = discovery.Peers.FirstOrDefault(p =>
+        p.DisplayName.Contains(which, StringComparison.OrdinalIgnoreCase));
+
+    if (peer is null) { Console.WriteLine($"could not find {which}"); return; }
+
+    var result = new SaveSync.Core.Lan.LanClient(config)
+        .KeepBothAsync(peer, inboxId, name, "probe").GetAwaiter().GetResult();
+
+    Console.WriteLine($"{peer.DisplayName}: {(result.Ok ? "OK" : "refused")} - {result.Message}");
 }
 
 void Kinship(string saveA, string saveB)

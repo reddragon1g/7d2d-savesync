@@ -136,7 +136,8 @@ public sealed class LanServer : IDisposable
                     // The new ops were missing from this list, so those connections were left
                     // waiting for a second request that was never coming.
                     if (request.Op is "hello" or "pair" or "list-saves" or "request-send"
-                        or "get-log" or "update-offer" or "update-file") return;
+                        or "get-log" or "update-offer" or "update-file"
+                        or "inbox-list" or "inbox-keep-both" or "restart") return;
                 }
             }
             catch (OperationCanceledException) { }
@@ -171,6 +172,9 @@ public sealed class LanServer : IDisposable
         {
             "list-saves" => ListSaves(),
             "get-log" => GetLog(),
+            "inbox-list" => InboxList(),
+            "inbox-keep-both" => InboxKeepBoth(request),
+            "restart" => Restart(request),
             "update-offer" => UpdateOffer(request),
             "update-file" => await UpdateFileAsync(request, stream, ct).ConfigureAwait(false),
             "request-send" => RequestSend(request, address),
@@ -219,6 +223,125 @@ public sealed class LanServer : IDisposable
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             return LanResponse.Fail("Could not read this PC's log: " + e.Message);
+        }
+    }
+
+    /// <summary>
+    /// Asks this PC to start its freshly installed copy and step aside.
+    ///
+    /// A program cannot replace itself while running, so an update that arrives over the network
+    /// only takes effect at the next launch - and on a machine nobody is sitting at, that could be
+    /// days. This closes that gap, and only that: it refuses while the game is open or a transfer
+    /// is in flight, and it refuses outright unless there is an installed copy to hand over to,
+    /// because the failure worth avoiding is a machine left with nothing running at all.
+    /// </summary>
+    private LanResponse Restart(LanRequest request)
+    {
+        if (RestartRequested is null)
+            return LanResponse.Fail("This PC cannot restart itself.");
+
+        var blockers = TransferEngine.GlobalBlockers();
+        if (blockers.Count > 0) return LanResponse.Fail(blockers[0].Message);
+
+        if (!_sessions.IsEmpty)
+            return LanResponse.Fail("A transfer is going on here right now.");
+
+        ActivityLog.Write($"asked by {request.DisplayName} to restart");
+        RestartRequested.Invoke();
+
+        return new LanResponse { Ok = true, Message = "Restarting." };
+    }
+
+    /// <summary>Raised when a peer has asked this copy to hand over to the installed one.</summary>
+    public event Action? RestartRequested;
+
+    /// <summary>Everything on this PC that is waiting for somebody to decide about it.</summary>
+    private LanResponse InboxList()
+    {
+        var engine = _engineProvider();
+        if (engine is null) return LanResponse.Fail("This PC is not set up yet.");
+
+        var waiting = new List<WaitingSave>();
+
+        foreach (var item in Inbox.List(engine.Workspace))
+        {
+            ImportPlan plan;
+            try { plan = engine.Inspect(item.Dir); }
+            catch (Exception e) when (e is IOException or InvalidOperationException) { continue; }
+
+            var evidence = SaveEvidence.Read(PackageLayout.Payload(item.Dir));
+
+            waiting.Add(new WaitingSave
+            {
+                Id = Path.GetFileName(item.Dir),
+                SaveName = item.Info.Passport.SaveName,
+                World = item.Info.Passport.World,
+                FromName = item.Info.CreatedBy,
+                Relation = plan.Relation.ToString(),
+                Why = Lineage.Explain(plan.Relation),
+                Day = evidence.Readable ? evidence.Day : 0,
+                Players = evidence.PlayerIds.Count,
+                Bytes = item.Info.PayloadBytes,
+                ReceivedAt = item.ReceivedAt,
+                SuggestedName = plan.SuggestedNewName(),
+            });
+        }
+
+        return new LanResponse { Ok = true, InboxJson = Json.Write(waiting) };
+    }
+
+    /// <summary>
+    /// Installs a waiting save BESIDE whatever is already here, under a different name.
+    ///
+    /// The only decision that can be made from another machine, and it is allowed precisely
+    /// because of what it cannot do: it never replaces, renames or removes anything that is
+    /// already on this PC. The worst it can produce is a spare save somebody deletes later. Every
+    /// other answer to a clash - taking the incoming copy, keeping this one - destroys one of the
+    /// two, and that stays a decision for a person sitting at this machine.
+    /// </summary>
+    private LanResponse InboxKeepBoth(LanRequest request)
+    {
+        var engine = _engineProvider();
+        if (engine is null) return LanResponse.Fail("This PC is not set up yet.");
+
+        if (string.IsNullOrWhiteSpace(request.InboxId))
+            return LanResponse.Fail("No waiting save was named.");
+
+        var item = Inbox.List(engine.Workspace)
+            .FirstOrDefault(i => string.Equals(Path.GetFileName(i.Dir), request.InboxId,
+                StringComparison.OrdinalIgnoreCase));
+
+        if (item is null) return LanResponse.Fail("There is nothing waiting by that name on this PC.");
+
+        try
+        {
+            var plan = engine.Inspect(item.Dir);
+            plan.InstallAsName = string.IsNullOrWhiteSpace(request.InstallAsName)
+                ? plan.SuggestedNewName()
+                : request.InstallAsName;
+
+            ActivityLog.Write($"asked by {request.DisplayName} to keep both for "
+                + $"{plan.Info.Passport.SaveName} - installing it as \"{plan.InstallAsName}\"");
+
+            var result = engine.Import(plan, ImportChoice.InstallAsNewSave);
+            if (!result.Applied) return LanResponse.Fail("It was not installed.");
+
+            Inbox.Discard(item.Dir);
+
+            return new LanResponse
+            {
+                Ok = true,
+                Applied = true,
+                Message = $"Installed as \"{plan.InstallAsName}\". Nothing already here was touched.",
+            };
+        }
+        catch (TransferBlockedException ex)
+        {
+            return LanResponse.Fail(ex.Message);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            return LanResponse.Fail(ex.Message);
         }
     }
 

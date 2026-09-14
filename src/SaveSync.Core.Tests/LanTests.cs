@@ -435,4 +435,72 @@ public class LanTests : IDisposable
 
         Assert.Null(staged);
     }
+
+    // ------------------------------------------------ deciding from another machine, safely
+
+    [Fact]
+    public async Task Keep_both_can_be_asked_for_remotely_and_never_replaces_anything()
+    {
+        // The one decision that may be made from somewhere else, allowed precisely because of what
+        // it cannot do. Every other answer to a clash destroys one of the two saves, and that
+        // stays with a person sitting at the machine.
+        _sender.MakeSave(saveName: "My Game");
+        _receiver.MakeSave(saveName: "My Game", seed: 88);
+        var theirs = Manifest.Build(_receiver.Slot(saveName: "My Game").Folder);
+
+        var package = _sender.NewEngine().Export(_sender.Slot(saveName: "My Game"), _outbox).PackageDir;
+
+        var peer = StartReceiver();
+        var client = new LanClient(_sender.Config);
+
+        Assert.True((await client.SendPackageAsync(peer, package, "Ryan")).Sent);
+
+        // It could not be applied, so it is waiting.
+        var waiting = await client.InboxAsync(peer, "Ryan");
+        var item = Assert.Single(waiting!);
+        Assert.Equal("My Game", item.SaveName);
+        Assert.False(string.IsNullOrWhiteSpace(item.SuggestedName));
+
+        var result = await client.KeepBothAsync(peer, item.Id, "My Game (from Ryan)", "Ryan");
+        Assert.True(result.Ok);
+
+        // Installed beside it...
+        Assert.NotNull(SaveDiscovery.Find(_receiver.Location, "Navezgane", "My Game (from Ryan)"));
+
+        // ...and the one that was already there is untouched, byte for byte.
+        Assert.Empty(theirs.Verify(_receiver.Slot(saveName: "My Game").Folder));
+    }
+
+    [Fact]
+    public async Task A_remote_keep_both_cannot_be_pointed_at_a_name_that_is_taken()
+    {
+        // It has exactly one power - adding a save - and it must not be talkable into using that
+        // power to land on top of something.
+        _sender.MakeSave(saveName: "My Game");
+        _receiver.MakeSave(saveName: "My Game", seed: 88);
+        _receiver.MakeSave(saveName: "Occupied", seed: 99);
+        var occupied = Manifest.Build(_receiver.Slot(saveName: "Occupied").Folder);
+
+        var package = _sender.NewEngine().Export(_sender.Slot(saveName: "My Game"), _outbox).PackageDir;
+
+        var peer = StartReceiver();
+        var client = new LanClient(_sender.Config);
+        await client.SendPackageAsync(peer, package, "Ryan");
+
+        var item = Assert.Single((await client.InboxAsync(peer, "Ryan"))!);
+        var result = await client.KeepBothAsync(peer, item.Id, "Occupied", "Ryan");
+
+        Assert.False(result.Ok);
+        Assert.Empty(occupied.Verify(_receiver.Slot(saveName: "Occupied").Folder));
+    }
+
+    [Fact]
+    public async Task Asking_about_a_save_that_is_not_waiting_is_refused()
+    {
+        var peer = StartReceiver();
+        var result = await new LanClient(_sender.Config)
+            .KeepBothAsync(peer, "no-such-thing", "Whatever", "Ryan");
+
+        Assert.False(result.Ok);
+    }
 }

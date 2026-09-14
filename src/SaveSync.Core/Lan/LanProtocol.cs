@@ -143,6 +143,10 @@ public sealed class LanRequest
     // update-offer: what is being offered, so the far side can refuse before a byte is sent.
     public string? OfferedVersion { get; set; }
     public string? OfferedSha256 { get; set; }
+
+    /// <summary>inbox-keep-both: which waiting package, and what to call the copy it installs.</summary>
+    public string? InboxId { get; set; }
+    public string? InstallAsName { get; set; }
     public int FileCount { get; set; }
     public long TotalBytes { get; set; }
 
@@ -188,6 +192,9 @@ public sealed class LanResponse
 
     /// <summary>Serialised list of PeerSave, for list-saves.</summary>
     public string? SavesJson { get; set; }
+
+    /// <summary>inbox-list: what is waiting for a person on that PC, as JSON.</summary>
+    public string? InboxJson { get; set; }
 
     /// <summary>get-log: that machine's own account of what it has been doing.</summary>
     public string? LogText { get; set; }

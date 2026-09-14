@@ -424,6 +424,7 @@ public sealed class MainForm : Form
         _server = new LanServer(_config, () => _engine);
         _server.PackageArrived += OnPackageArrived;
         _server.UpdateStaged += OnUpdateStaged;
+        _server.RestartRequested += OnRestartRequested;
         _server.Start();
 
         _discovery = new Discovery(_config)
@@ -658,6 +659,36 @@ public sealed class MainForm : Form
             }
 
             Rebuild();
+        });
+    }
+
+    /// <summary>
+    /// Hands over to the installed copy, on request from the other PC.
+    ///
+    /// Launch first and only then exit: a machine left with nothing running is unreachable, and
+    /// unreachable is much worse than out of date.
+    /// </summary>
+    private void OnRestartRequested()
+    {
+        if (IsDisposed || !IsHandleCreated) return;
+        BeginInvoke(() =>
+        {
+            if (!Installer.IsInstalled)
+            {
+                ActivityLog.Write("asked to restart, but nothing is installed here to hand over to");
+                return;
+            }
+
+            ActivityLog.Write("handing over to the installed copy on request");
+
+            if (!Installer.LaunchInstalled())
+            {
+                ActivityLog.Write("the installed copy would not start; staying as we are");
+                return;
+            }
+
+            _reallyClosing = true;
+            Close();
         });
     }
 
