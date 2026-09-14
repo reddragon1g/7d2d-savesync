@@ -252,6 +252,31 @@ public static class GameTuning
         new("OptionsGfxViewDistance", "5", "the shortest view distance the game offers"),
     };
 
+    public const string Sharp = "sharp";
+    public const string Sharper = "sharper";
+
+    /// <summary>
+    /// Steps the upscaler up one quality level, and again.
+    ///
+    /// UpscalingSetQuality maps the preset to how much is actually rendered: 1 is Performance and
+    /// draws at half scale per axis, 2 is Balanced, 3 is Quality at roughly two thirds. Everything
+    /// else about the frame stays where it was measured, so these are the one dial to turn when
+    /// there is thermal headroom going spare and the complaint is that it looks soft.
+    ///
+    /// Separate and composable on purpose. Turning one dial at a time is the only reason any of
+    /// the earlier findings here are trustworthy, and the gap between comfortable and collapsed on
+    /// this machine turned out to be narrow enough to walk into by accident.
+    /// </summary>
+    public static readonly Setting[] SharpProfile =
+    {
+        new("OptionsGfxFSRPreset", "2", "Balanced - about a third more pixels than Performance"),
+    };
+
+    public static readonly Setting[] SharperProfile =
+    {
+        new("OptionsGfxFSRPreset", "3", "Quality - roughly two thirds scale, close to native"),
+    };
+
     public const string NoShadow = "noshadow";
 
     /// <summary>
@@ -350,6 +375,8 @@ public static class GameTuning
          : string.Equals(name, Balanced, StringComparison.OrdinalIgnoreCase) ? BalancedProfile
          : string.Equals(name, Playable, StringComparison.OrdinalIgnoreCase) ? PlayableProfile
          : string.Equals(name, Steady, StringComparison.OrdinalIgnoreCase) ? SteadyProfile
+         : string.Equals(name, Sharp, StringComparison.OrdinalIgnoreCase) ? SharpProfile
+         : string.Equals(name, Sharper, StringComparison.OrdinalIgnoreCase) ? SharperProfile
          : string.Equals(name, NoShadow, StringComparison.OrdinalIgnoreCase) ? NoShadowProfile
          : string.Equals(name, BaseFix, StringComparison.OrdinalIgnoreCase) ? BaseFixProfile
          : string.Equals(name, NoDymesh, StringComparison.OrdinalIgnoreCase) ? NoDymeshProfile
