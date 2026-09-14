@@ -17,14 +17,46 @@ namespace SaveSync.Core.Lan;
 /// </summary>
 public static class RemoteUpdate
 {
-    /// <summary>Where a received program waits until it has been checked and put in place.</summary>
-    public const string StagedName = "incoming-update.exe";
+    /// <summary>
+    /// What a received program is called while it waits to be checked.
+    ///
+    /// A PREFIX, not a fixed name. Reusing one name meant that a single leftover copy that
+    /// something else on the PC had taken a hold of - antivirus inspecting an unsigned executable
+    /// is the obvious candidate - blocked every future update on that machine permanently, because
+    /// the file could neither be deleted nor overwritten. Seen for real: one PC accepted an update
+    /// and its neighbour refused every attempt afterwards, including a four-kilobyte one.
+    /// </summary>
+    public const string StagedPrefix = "incoming-update-";
+
+    /// <summary>Kept for anything still looking for the old fixed name.</summary>
+    public const string StagedName = StagedPrefix + "legacy.exe";
 
     /// <summary>Nothing larger is accepted. The self-contained build is about 66 MB.</summary>
     public const long MaxBytes = 200L * 1024 * 1024;
 
     public static Version RunningVersion =>
         typeof(RemoteUpdate).Assembly.GetName().Version ?? new Version(0, 0);
+
+    /// <summary>
+    /// Clears out staged programs from previous attempts, best effort.
+    ///
+    /// One that cannot be deleted is stepped over rather than treated as a failure - that is the
+    /// whole point of not reusing the name.
+    /// </summary>
+    public static void SweepOldStaged(Workspace workspace)
+    {
+        try
+        {
+            if (!Directory.Exists(workspace.Staging)) return;
+
+            foreach (var file in Directory.GetFiles(workspace.Staging, StagedPrefix + "*.exe"))
+            {
+                try { File.Delete(file); }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+    }
 
     public static string Sha256Of(string path)
     {
@@ -33,24 +65,44 @@ public static class RemoteUpdate
         return Convert.ToHexString(sha.ComputeHash(fs)).ToLowerInvariant();
     }
 
-    /// <summary>
-    /// Reads the program off the wire into the workspace and checks it.
-    ///
-    /// Returns where it was staged, or null when it did not match - in which case the bytes are
-    /// deleted rather than left lying around. A file that failed its checksum is either a broken
-    /// transfer or something worse, and there is no version of "keep it just in case" that is
-    /// sensible for an executable.
-    /// </summary>
+    /// <summary>Where it got to, and why it stopped. "It failed" is not a diagnosis.</summary>
+    public sealed record Received(string? Path, string Reason)
+    {
+        public bool Ok => Path is not null;
+    }
+
     public static async Task<string?> ReceiveAsync(
         Workspace workspace, Stream source, long declaredBytes, string declaredSha, CancellationToken ct = default)
+        => (await ReceiveDetailedAsync(workspace, source, declaredBytes, declaredSha, ct).ConfigureAwait(false)).Path;
+
+    /// <summary>
+    /// As ReceiveAsync, but says what went wrong.
+    ///
+    /// Every failure used to surface as "did not match its checksum", which sent a real
+    /// investigation in the wrong direction: a disk that was full, a folder that could not be
+    /// written to, and an antivirus quarantining an unsigned executable mid-write all reported
+    /// themselves as a corrupted transfer.
+    /// </summary>
+    public static async Task<Received> ReceiveDetailedAsync(
+        Workspace workspace, Stream source, long declaredBytes, string declaredSha, CancellationToken ct = default)
     {
-        if (declaredBytes <= 0 || declaredBytes > MaxBytes) return null;
-        if (string.IsNullOrWhiteSpace(declaredSha)) return null;
+        if (declaredBytes <= 0 || declaredBytes > MaxBytes)
+            return new Received(null, $"the offered size ({declaredBytes} bytes) is not believable");
+        if (string.IsNullOrWhiteSpace(declaredSha))
+            return new Received(null, "no checksum was offered with it");
 
         workspace.EnsureCreated();
-        var staged = Path.Combine(workspace.Staging, StagedName);
+        SweepOldStaged(workspace);
 
-        try { File.Delete(staged); } catch (IOException) { }
+        // A fresh name every time, so nothing that is still holding yesterday's copy can stop
+        // today's from arriving.
+        var staged = Path.Combine(workspace.Staging, StagedPrefix + Guid.NewGuid().ToString("N")[..8] + ".exe");
+
+        var free = FileOps.FreeSpace(workspace.Staging);
+        if (free >= 0 && free < declaredBytes + (64L * 1024 * 1024))
+            return new Received(null,
+                $"not enough room on this PC ({PathUtil.HumanBytes(free)} free, "
+                + $"needs {PathUtil.HumanBytes(declaredBytes)})");
 
         try
         {
@@ -74,22 +126,47 @@ public static class RemoteUpdate
                 {
                     file.Close();
                     try { File.Delete(staged); } catch (IOException) { }
-                    return null;
+                    return new Received(null,
+                        $"the transfer stopped early - {declaredBytes - remaining:N0} of {declaredBytes:N0} bytes arrived");
                 }
             }
 
-            if (!string.Equals(Sha256Of(staged), declaredSha, StringComparison.OrdinalIgnoreCase))
+            // Re-read from disk, which is the point: it proves what is actually sitting there, not
+            // what was believed to have been written.
+            long onDisk;
+            string actual;
+            try
             {
-                try { File.Delete(staged); } catch (IOException) { }
-                return null;
+                onDisk = new FileInfo(staged).Length;
+                actual = Sha256Of(staged);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or FileNotFoundException)
+            {
+                return new Received(null,
+                    "the file could not be read back after being written - something else on this PC "
+                    + $"took it away (antivirus is the usual culprit for an unsigned program): {e.Message}");
             }
 
-            return staged;
+            if (onDisk != declaredBytes)
+            {
+                try { File.Delete(staged); } catch (IOException) { }
+                return new Received(null,
+                    $"{onDisk:N0} bytes ended up on disk but {declaredBytes:N0} were sent - something "
+                    + "changed the file while it was being written");
+            }
+
+            if (!string.Equals(actual, declaredSha, StringComparison.OrdinalIgnoreCase))
+            {
+                try { File.Delete(staged); } catch (IOException) { }
+                return new Received(null, "the bytes that arrived do not match the checksum that was declared");
+            }
+
+            return new Received(staged, "ok");
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or OperationCanceledException)
         {
             try { File.Delete(staged); } catch (IOException) { }
-            return null;
+            return new Received(null, $"{e.GetType().Name}: {e.Message}");
         }
     }
 }

@@ -35,6 +35,9 @@ try
         case "play": Play(At(1), At(2), At(3)); break;
         case "inspect": Inspect(At(1), At(2)); break;
         case "kinship": Kinship(At(1), At(2)); break;
+        case "peers": Peers(int.TryParse(Arg(1), out var secs) ? secs : 8); break;
+        case "peerlog": PeerLog(int.TryParse(Arg(1), out var wait) ? wait : 8, Arg(2)); break;
+        case "pushupdate": PushUpdate(At(1), int.TryParse(Arg(2), out var w2) ? w2 : 8, Arg(3)); break;
         case "import": Import(At(1), At(2), Arg(3) ?? "apply"); break;
         default:
             Console.WriteLine($"unknown command: {cmd}");
@@ -62,6 +65,94 @@ TransferEngine Engine(string userData)
     var engine = new TransferEngine(new AppConfig { SnapshotsToKeep = 10 }, loc);
     ActivityLog.Open(engine.Workspace, Machine.Name + " (probe)");
     return engine;
+}
+
+/// <summary>Listens for other PCs on this network and says what answered.</summary>
+void Peers(int seconds)
+{
+    var config = AppConfig.Load();
+    Console.WriteLine($"this PC   : {config.DisplayName}  ({config.MachineId})");
+    Console.WriteLine($"networking: {(config.UseNetwork ? "on" : "OFF")}   "
+        + $"firewall rule: {(SaveSync.Core.Lan.FirewallSetup.IsConfigured() ? "present" : "MISSING")}");
+    Console.WriteLine($"listening for {seconds}s...");
+    Console.WriteLine();
+
+    using var discovery = new SaveSync.Core.Lan.Discovery(config) { PersonName = "probe" };
+    discovery.Start();
+    if (discovery.StartFailure is not null) Console.WriteLine($"discovery failed to start: {discovery.StartFailure}");
+
+    Thread.Sleep(TimeSpan.FromSeconds(seconds));
+
+    var found = discovery.Peers.ToList();
+    if (found.Count == 0)
+    {
+        Console.WriteLine("nothing answered.");
+        return;
+    }
+
+    foreach (var p in found)
+        Console.WriteLine($"  {p.Label,-18} {p.DisplayName,-18} {p.Address}:{p.Port}  last seen {p.LastSeen:HH:mm:ss}");
+}
+
+/// <summary>Fetches another PC's log and prints it.</summary>
+void PeerLog(int seconds, string? which)
+{
+    var config = AppConfig.Load();
+
+    using var discovery = new SaveSync.Core.Lan.Discovery(config) { PersonName = "probe" };
+    discovery.Start();
+    Thread.Sleep(TimeSpan.FromSeconds(seconds));
+
+    var peers = discovery.Peers.ToList();
+    if (peers.Count == 0) { Console.WriteLine("no other PC answered."); return; }
+
+    var wanted = which is null
+        ? peers
+        : peers.Where(p => p.DisplayName.Contains(which, StringComparison.OrdinalIgnoreCase)
+                           || p.Label.Contains(which, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    foreach (var peer in wanted)
+    {
+        Console.WriteLine($"================ {peer.Label} ({peer.DisplayName}) at {peer.Address} ================");
+        var report = new SaveSync.Core.Lan.LanClient(config)
+            .GetLogAsync(peer, "probe").GetAwaiter().GetResult();
+
+        if (report is null) { Console.WriteLine("  no answer."); continue; }
+
+        Console.WriteLine($"  version: {report.ToolVersion}");
+        Console.WriteLine(report.Text.Length == 0 ? "  (its log is empty)" : report.Text);
+        Console.WriteLine();
+    }
+}
+
+/// <summary>Hands a newer program to every PC on this network that will take one.</summary>
+void PushUpdate(string exePath, int seconds, string? which)
+{
+    if (!File.Exists(exePath)) { Console.WriteLine($"no such file: {exePath}"); return; }
+
+    var config = AppConfig.Load();
+    Console.WriteLine($"offering {exePath}");
+    Console.WriteLine($"  {new FileInfo(exePath).Length:N0} bytes  sha {SaveSync.Core.Lan.RemoteUpdate.Sha256Of(exePath)[..16]}...");
+    Console.WriteLine($"  this build is {SaveSync.Core.Lan.RemoteUpdate.RunningVersion}");
+    Console.WriteLine();
+
+    using var discovery = new SaveSync.Core.Lan.Discovery(config) { PersonName = "probe" };
+    discovery.Start();
+    Thread.Sleep(TimeSpan.FromSeconds(seconds));
+
+    var peers = discovery.Peers
+        .Where(p => which is null || p.DisplayName.Contains(which, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    if (peers.Count == 0) { Console.WriteLine("no other PC answered."); return; }
+
+    var client = new SaveSync.Core.Lan.LanClient(config);
+    foreach (var peer in peers)
+    {
+        Console.Write($"  {peer.DisplayName,-18} {peer.Address,-16} ");
+        var result = client.PushUpdateAsync(peer, exePath, "probe").GetAwaiter().GetResult();
+        Console.WriteLine(result.Sent ? "SENT - " + result.Message : "refused - " + result.Message);
+    }
 }
 
 void Kinship(string saveA, string saveB)

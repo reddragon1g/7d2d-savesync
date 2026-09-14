@@ -132,7 +132,11 @@ public sealed class LanServer : IDisposable
                     var response = await HandleAsync(request, stream, address, ct).ConfigureAwait(false);
                     await LanProtocol.WriteMessageAsync(stream, response, ct: ct).ConfigureAwait(false);
 
-                    if (request.Op is "hello" or "pair" or "list-saves" or "request-send") return;
+                    // One exchange, one connection, for everything that is not part of a push.
+                    // The new ops were missing from this list, so those connections were left
+                    // waiting for a second request that was never coming.
+                    if (request.Op is "hello" or "pair" or "list-saves" or "request-send"
+                        or "get-log" or "update-offer" or "update-file") return;
                 }
             }
             catch (OperationCanceledException) { }
@@ -260,13 +264,17 @@ public sealed class LanServer : IDisposable
 
         try
         {
-            var staged = await RemoteUpdate.ReceiveAsync(
+            var received = await RemoteUpdate.ReceiveDetailedAsync(
                 engine.Workspace, stream, request.BodyBytes, request.OfferedSha256 ?? "", ct)
                 .ConfigureAwait(false);
 
-            if (staged is null)
-                return LanResponse.Fail("The program that arrived did not match its checksum; it was discarded.");
+            if (!received.Ok)
+            {
+                ActivityLog.Write($"an update to {request.OfferedVersion} was not kept: {received.Reason}");
+                return LanResponse.Fail("It was not kept on this PC: " + received.Reason);
+            }
 
+            var staged = received.Path!;
             ActivityLog.Write($"an update to {request.OfferedVersion} arrived and checked out; staged at {staged}");
             UpdateStaged?.Invoke(staged, request.OfferedVersion ?? "");
 

@@ -521,7 +521,21 @@ public sealed class MainForm : Form
         if (watcher is null || _busy) return;
 
         var pull = news.Where(n => n.Direction == SyncDirection.ToPc).ToList();
-        var push = news.Where(n => n.Direction == SyncDirection.ToStick && n.Local is not null).ToList();
+        // Only saves that have been part of a transfer before. A save this PC has never sent
+        // anywhere is a new introduction rather than an update, and introducing one machine's
+        // private saves to another is not a decision to make on somebody's behalf - seen for real:
+        // a laptop deciding to push its owner's own worlds onto a friend's PC because he happened
+        // to have nothing by that name.
+        var push = news
+            .Where(n => n.Direction == SyncDirection.ToStick
+                        && n.Local is not null
+                        && n.Local.Passport is not null)
+            .ToList();
+
+        var unintroduced = news.Count(n => n.Direction == SyncDirection.ToStick && n.Local?.Passport is null);
+        if (unintroduced > 0)
+            ActivityLog.Write($"{unintroduced} save(s) here have never been copied anywhere; "
+                + "leaving them for a person to send the first time");
         var stuck = news.Where(n => n.Direction == SyncDirection.Conflict).ToList();
 
         if (pull.Count == 0 && push.Count == 0)
@@ -1002,9 +1016,38 @@ public sealed class MainForm : Form
         try
         {
             WorkDialog.Run(this, "Updating", "Replacing the installed copy...", (_, _) => Installer.Install());
+            ActivityLog.Write($"installed copy updated to {Installer.ThisVersion} from {AppContext.BaseDirectory}");
 
-            Dialogs.Info(this, "Updated",
-                $"This PC is now on {Installer.ThisVersion}. Everything else is exactly as it was.");
+            // Offer to hand over to it. Otherwise the copy left running is this one - off a USB
+            // stick that is about to be unplugged - and the freshly installed copy sits idle until
+            // the next login. Seen for real on two machines at once: both were running an orphaned
+            // stick copy while their installed copy, the one that survives a reboot, was older.
+            if (!Installer.RunningInstalled && Dialogs.Confirm(this, "Updated",
+                    $"This PC is now on {Installer.ThisVersion}."
+                    + Environment.NewLine + Environment.NewLine
+                    + "Right now you are using the copy on the USB stick. Switch to the one just "
+                    + "installed on this PC? That is the copy that starts with Windows and keeps "
+                    + "working after you take the stick out."
+                    + Environment.NewLine + Environment.NewLine
+                    + "This window will close and the installed one will open.",
+                    "Switch to the installed copy"))
+            {
+                ActivityLog.Write("handing over to the installed copy");
+                if (Installer.LaunchInstalled())
+                {
+                    _reallyClosing = true;
+                    Close();
+                    return;
+                }
+
+                Dialogs.Warn(this, "Could not start it",
+                    "The installed copy did not start. This one still works.");
+            }
+            else
+            {
+                Dialogs.Info(this, "Updated",
+                    $"This PC is now on {Installer.ThisVersion}. Everything else is exactly as it was.");
+            }
         }
         catch (Exception ex)
         {
