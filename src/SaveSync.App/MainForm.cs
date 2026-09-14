@@ -553,6 +553,10 @@ public sealed class MainForm : Form
                     : "automatic transfer moved nothing"
                       + (stuck.Count > 0 ? $" ({stuck.Count} waiting for a person)" : ""));
 
+                // After writing it down, not before - mirroring first would carry home an account
+                // that stops one line short of the thing it was mirrored to report.
+                if (_stickRoot is not null) ActivityLog.MirrorTo(_stickRoot);
+
                 if (moved.Count > 0)
                 {
                     _autoState.LastTransfer = DateTimeOffset.UtcNow;
@@ -1203,6 +1207,15 @@ public sealed class MainForm : Form
 
     private void Report(string title, SyncOutcome outcome, string next)
     {
+        ActivityLog.Write($"{title}: copied {outcome.Copied.Count}, skipped {outcome.Skipped.Count}, "
+            + $"{outcome.NeedsChoice.Count} waiting for a person");
+
+        // Onto the stick NOW, not at the next startup. Mirroring only on the way in meant the
+        // stick went home carrying an account that stopped just before the part worth reading -
+        // the transfer that had only just happened.
+        if (_stickRoot is not null) ActivityLog.MirrorTo(_stickRoot);
+
+
         var lines = new List<string>
         {
             outcome.Copied.Count > 0
@@ -1476,6 +1489,9 @@ public sealed class MainForm : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        ActivityLog.Write("closed");
+        if (_stickRoot is not null) ActivityLog.MirrorTo(_stickRoot);
+
         _stopShowListener = true;
         try { _showRequest?.Set(); } catch (ObjectDisposedException) { }
         _showRequest?.Dispose();
