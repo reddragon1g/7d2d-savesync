@@ -252,6 +252,26 @@ public static class GameTuning
         new("OptionsGfxViewDistance", "5", "the shortest view distance the game offers"),
     };
 
+    public const string NoShadow = "noshadow";
+
+    /// <summary>
+    /// Turns every shadow off, as a measurement rather than a preference.
+    ///
+    /// QualitySettings.shadows is global: at quality 0 it is Disable and NOTHING casts a shadow,
+    /// at 1 it is HardOnly and every shadow-casting light in range renders a shadow map - which
+    /// for a point light is a cubemap, six renders. A base with a great many lights in it pays
+    /// that bill once per light, concentrated exactly where the lights were put.
+    ///
+    /// Composed onto another profile, this isolates what shadows cost in a particular base. It is
+    /// not meant to be lived with - a world with no shadows in it reads as broken - but the
+    /// difference between running with it and without it is the number that says whether the
+    /// lights are the problem.
+    /// </summary>
+    public static readonly Setting[] NoShadowProfile =
+    {
+        new("OptionsGfxShadowQuality", "0", "no shadows from anything, including every light"),
+    };
+
     public const string BaseFix = "basefix";
 
     /// <summary>
@@ -330,6 +350,7 @@ public static class GameTuning
          : string.Equals(name, Balanced, StringComparison.OrdinalIgnoreCase) ? BalancedProfile
          : string.Equals(name, Playable, StringComparison.OrdinalIgnoreCase) ? PlayableProfile
          : string.Equals(name, Steady, StringComparison.OrdinalIgnoreCase) ? SteadyProfile
+         : string.Equals(name, NoShadow, StringComparison.OrdinalIgnoreCase) ? NoShadowProfile
          : string.Equals(name, BaseFix, StringComparison.OrdinalIgnoreCase) ? BaseFixProfile
          : string.Equals(name, NoDymesh, StringComparison.OrdinalIgnoreCase) ? NoDymeshProfile
          : null;
