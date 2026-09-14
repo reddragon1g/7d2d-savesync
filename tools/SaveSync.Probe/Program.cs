@@ -42,6 +42,7 @@ try
         case "inbox": Inbox_(int.TryParse(Arg(1), out var iw) ? iw : 8, Arg(2)); break;
         case "restart": RestartPeer(int.TryParse(Arg(1), out var rw) ? rw : 8, Arg(2)); break;
         case "peersaves": PeerSaves(int.TryParse(Arg(1), out var sw) ? sw : 8, Arg(2)); break;
+        case "rename": RenamePeerSave(At(1), At(2), At(3), At(4)); break;
         case "keepboth": KeepBoth(int.TryParse(Arg(1), out var kw) ? kw : 8, At(2), At(3), Arg(4)); break;
         case "import": Import(At(1), At(2), Arg(3) ?? "apply"); break;
         default:
@@ -254,6 +255,25 @@ void Relay(string userData, string fromName, string toName, string world, string
     Console.WriteLine(sent.Sent
         ? $"delivered. {to.DisplayName} says: {sent.Message}"
         : $"not delivered: {sent.Message}");
+}
+
+/// <summary>Renames a save on another PC. Nothing is copied and nothing is deleted.</summary>
+void RenamePeerSave(string which, string world, string saveName, string newName)
+{
+    var config = AppConfig.Load();
+    using var discovery = new SaveSync.Core.Lan.Discovery(config) { PersonName = "probe" };
+    discovery.Start();
+    Thread.Sleep(TimeSpan.FromSeconds(8));
+
+    var peer = discovery.Peers.FirstOrDefault(p =>
+        p.DisplayName.Contains(which, StringComparison.OrdinalIgnoreCase));
+
+    if (peer is null) { Console.WriteLine($"could not find {which}"); return; }
+
+    var r = new SaveSync.Core.Lan.LanClient(config)
+        .RenameSaveAsync(peer, world, saveName, newName, "probe").GetAwaiter().GetResult();
+
+    Console.WriteLine($"{peer.DisplayName}: {(r.Ok ? "OK" : "refused")} - {r.Message}");
 }
 
 /// <summary>Every save each PC holds, as that PC describes it. Works on older copies too.</summary>

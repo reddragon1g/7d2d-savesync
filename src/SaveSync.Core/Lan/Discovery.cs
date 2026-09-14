@@ -22,6 +22,7 @@ public sealed class Discovery : IDisposable
     private UdpClient? _listener;
     private Task? _listenTask;
     private Task? _announceTask;
+    private Task? _knockTask;
 
     public Discovery(AppConfig config) => _config = config;
 
@@ -58,6 +59,7 @@ public sealed class Discovery : IDisposable
 
         _listenTask = Task.Run(() => ListenAsync(_cts.Token));
         _announceTask = Task.Run(() => AnnounceAsync(_cts.Token));
+        _knockTask = Task.Run(() => KnockAsync(_cts.Token));
     }
 
     public void Stop()
@@ -101,6 +103,75 @@ public sealed class Discovery : IDisposable
             bool isNew = !_peers.ContainsKey(peer.MachineId);
             _peers[peer.MachineId] = peer;
             if (isNew) PeerSeen?.Invoke(peer);
+        }
+    }
+
+    /// <summary>How often to try a PC we know about but have not heard a broadcast from.</summary>
+    private static readonly TimeSpan KnockEvery = TimeSpan.FromSeconds(20);
+
+    /// <summary>
+    /// Knocks directly on the door of every PC this one has met before.
+    ///
+    /// Broadcast is how two machines find each other the first time, and it is the part that
+    /// quietly stops working: a router handing out several networks - a second band, a guest
+    /// network - will happily route traffic between them while dropping the broadcasts, so two PCs
+    /// that can reach each other perfectly well never hear each other announce.
+    ///
+    /// An address that has worked before is worth trying again for exactly that reason. It costs
+    /// one small message to a machine that is probably not even there.
+    /// </summary>
+    private async Task KnockAsync(CancellationToken ct)
+    {
+        var client = new LanClient(_config);
+
+        while (!ct.IsCancellationRequested)
+        {
+            foreach (var known in _config.Peers.ToList())
+            {
+                if (ct.IsCancellationRequested) return;
+
+                if (string.IsNullOrWhiteSpace(known.LastAddress)) continue;
+
+                // Already heard from by broadcast; no need to knock.
+                if (_peers.TryGetValue(known.MachineId, out var seen) && seen.IsFresh) continue;
+
+                var candidate = new LanPeer
+                {
+                    MachineId = known.MachineId,
+                    DisplayName = string.IsNullOrWhiteSpace(known.DisplayName) ? "the other PC" : known.DisplayName,
+                    Address = known.LastAddress,
+                    Port = _config.LanPort,
+                    LastSeen = DateTimeOffset.UtcNow,
+                };
+
+                LanResponse? answer;
+                try { answer = await client.HelloAsync(candidate.Address, candidate.Port, ct).ConfigureAwait(false); }
+                catch (Exception e) when (e is IOException or SocketException) { continue; }
+                catch (OperationCanceledException) { return; }
+
+                if (answer is null || !answer.Ok) continue;
+
+                // Only believe it is the machine we expected. An address can be reassigned by the
+                // router overnight, and talking to whoever now holds it is worse than not talking.
+                if (!string.Equals(answer.MachineId, known.MachineId, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var peer = new LanPeer
+                {
+                    MachineId = known.MachineId,
+                    DisplayName = string.IsNullOrWhiteSpace(answer.DisplayName) ? candidate.DisplayName : answer.DisplayName,
+                    Address = known.LastAddress,
+                    Port = _config.LanPort,
+                    LastSeen = DateTimeOffset.UtcNow,
+                };
+
+                bool isNew = !_peers.ContainsKey(peer.MachineId);
+                _peers[peer.MachineId] = peer;
+                if (isNew) PeerSeen?.Invoke(peer);
+            }
+
+            try { await Task.Delay(KnockEvery, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return; }
         }
     }
 
