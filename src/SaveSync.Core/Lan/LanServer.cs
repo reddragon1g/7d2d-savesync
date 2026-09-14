@@ -166,6 +166,9 @@ public sealed class LanServer : IDisposable
         return request.Op switch
         {
             "list-saves" => ListSaves(),
+            "get-log" => GetLog(),
+            "update-offer" => UpdateOffer(request),
+            "update-file" => await UpdateFileAsync(request, stream, ct).ConfigureAwait(false),
             "request-send" => RequestSend(request, address),
             "push-begin" => PushBegin(request, address),
             "push-file" => await PushFileAsync(request, stream, ct).ConfigureAwait(false),
@@ -174,6 +177,109 @@ public sealed class LanServer : IDisposable
             _ => LanResponse.Fail($"Unknown request '{request.Op}'."),
         };
     }
+
+    /// <summary>
+    /// Hands over this machine's account of itself.
+    ///
+    /// Read-only, and available to any paired peer: it is the same text the person sitting at this
+    /// PC can open from the window, and being able to ask a machine you cannot walk over to is the
+    /// entire point. It says what was looked at and what was decided - no secrets, no credentials.
+    /// </summary>
+    private LanResponse GetLog()
+    {
+        var path = ActivityLog.FilePath;
+        if (path is null || !File.Exists(path))
+            return new LanResponse
+            {
+                Ok = true,
+                LogLabel = _config.DisplayName,
+                LogText = "",
+                ToolVersion = TransferEngine.ToolVersion,
+            };
+
+        try
+        {
+            // Shared read: this machine is very likely writing to it at the same moment.
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(fs);
+
+            return new LanResponse
+            {
+                Ok = true,
+                LogLabel = _config.DisplayName,
+                LogText = reader.ReadToEnd(),
+                ToolVersion = TransferEngine.ToolVersion,
+            };
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return LanResponse.Fail("Could not read this PC's log: " + e.Message);
+        }
+    }
+
+    /// <summary>
+    /// Somebody is offering to replace the program on this PC. Answered before a byte is sent.
+    ///
+    /// Refused unless this machine has been explicitly told to accept updates - pairing alone is
+    /// never enough for this one - and unless what is on offer is actually newer than what is
+    /// here, so a stale copy on somebody's stick cannot walk a machine backwards.
+    /// </summary>
+    private LanResponse UpdateOffer(LanRequest request)
+    {
+        if (!_config.AllowRemoteUpdate)
+            return LanResponse.Fail(
+                "This PC has not been set to accept program updates over the network. Somebody has "
+                + "to switch that on at that PC first.");
+
+        if (!Version.TryParse(request.OfferedVersion, out var offered))
+            return LanResponse.Fail("The offered version could not be read.");
+
+        var mine = RemoteUpdate.RunningVersion;
+        if (offered <= mine)
+            return LanResponse.Fail($"This PC is already on {mine}.");
+
+        if (string.IsNullOrWhiteSpace(request.OfferedSha256))
+            return LanResponse.Fail("The offered program did not come with a checksum.");
+
+        ActivityLog.Write($"offered an update to {offered} by {request.DisplayName} - accepting");
+        return new LanResponse { Ok = true, ToolVersion = mine.ToString() };
+    }
+
+    /// <summary>
+    /// Receives the program itself and stages it. Verified against the checksum that was declared
+    /// up front, and not put anywhere it would be run until it matches.
+    /// </summary>
+    private async Task<LanResponse> UpdateFileAsync(LanRequest request, Stream stream, CancellationToken ct)
+    {
+        if (!_config.AllowRemoteUpdate)
+            return LanResponse.Fail("This PC does not accept program updates over the network.");
+
+        var engine = _engineProvider();
+        if (engine is null) return LanResponse.Fail("This PC is not set up yet.");
+
+        try
+        {
+            var staged = await RemoteUpdate.ReceiveAsync(
+                engine.Workspace, stream, request.BodyBytes, request.OfferedSha256 ?? "", ct)
+                .ConfigureAwait(false);
+
+            if (staged is null)
+                return LanResponse.Fail("The program that arrived did not match its checksum; it was discarded.");
+
+            ActivityLog.Write($"an update to {request.OfferedVersion} arrived and checked out; staged at {staged}");
+            UpdateStaged?.Invoke(staged, request.OfferedVersion ?? "");
+
+            return new LanResponse { Ok = true, Message = "Received. It will be put in place here." };
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return LanResponse.Fail("Could not save the update on this PC: " + e.Message);
+        }
+    }
+
+    /// <summary>Raised when a verified update is sitting ready. The app decides when to apply it.</summary>
+    public event Action<string, string>? UpdateStaged;
 
     private LanResponse Hello(LanRequest request, string address)
     {

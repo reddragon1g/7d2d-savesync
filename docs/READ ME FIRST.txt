@@ -74,6 +74,23 @@ The window always says when it last checked and what it did, so you never have
 to wonder whether it worked.
 
 
+CHECKING ON THE OTHER PC WITHOUT WALKING OVER TO IT
+---------------------------------------------------
+Click "Check the other PC". It asks the other machine what it has been doing
+and saves its log here, so you can see whether it ever looked, what it found,
+and what it decided - without going and sitting at it.
+
+If this PC has a newer version of the program than that one, it offers to send
+it over as well, so nobody has to carry the USB stick around just to update it.
+
+That only works if the other PC has been told to accept it. On THAT PC, click
+"Allow updates from the other PC". It is off until you say so, on purpose: it
+is the only thing that involves one PC running a program the other one sent,
+and that is not something to switch on by accident.
+
+Your saves and backups are never touched by a program update.
+
+
 TWO SAVES WITH THE SAME NAME
 ----------------------------
 The game calls everyone's first world the same thing, so this comes up a lot.

@@ -332,4 +332,107 @@ public class LanTests : IDisposable
         var response = await new LanClient(_sender.Config).HelloAsync("127.0.0.1", 47999);
         Assert.Null(response);
     }
+
+    // ------------------------------------------------ asking another PC, and handing it a program
+
+    [Fact]
+    public async Task One_PC_can_ask_another_what_it_has_been_doing()
+    {
+        // The point: a machine in another room can be made to account for itself without walking
+        // over to it. Read-only, so any paired peer may ask.
+        var ws = new Workspace(_receiver.Location.UserDataRoot);
+        try
+        {
+            ActivityLog.Open(ws, "LAPTOP");
+            ActivityLog.Write("applied My Game (Navezgane) v4");
+
+            var peer = StartReceiver();
+            var report = await new LanClient(_sender.Config).GetLogAsync(peer, "Ryan");
+
+            Assert.NotNull(report);
+            Assert.Contains("applied My Game", report!.Text);
+            Assert.False(string.IsNullOrWhiteSpace(report.ToolVersion));
+        }
+        finally { ActivityLog.Close(); }
+    }
+
+    [Fact]
+    public async Task A_PC_refuses_a_program_update_unless_it_has_been_told_to_accept_them()
+    {
+        // Pairing happens automatically and without asking anybody. That is defensible while the
+        // worst a peer can do is offer a save this machine then judges for itself - and is not
+        // defensible for handing over something that will be run. So this needs its own yes.
+        Assert.False(_receiver.Config.AllowRemoteUpdate);
+
+        var exe = Path.Combine(_sender.Root, "pretend.exe");
+        File.WriteAllBytes(exe, new byte[] { 1, 2, 3, 4 });
+
+        var peer = StartReceiver();
+        var result = await new LanClient(_sender.Config).PushUpdateAsync(peer, exe, "Ryan");
+
+        Assert.False(result.Sent);
+        Assert.Contains("not been set to accept", result.Message);
+    }
+
+    [Fact]
+    public async Task An_older_version_is_refused_even_when_updates_are_allowed()
+    {
+        // Otherwise a stale copy on somebody's stick could walk a PC backwards.
+        _receiver.Config.AllowRemoteUpdate = true;
+
+        var exe = Path.Combine(_sender.Root, "pretend.exe");
+        File.WriteAllBytes(exe, new byte[] { 1, 2, 3, 4 });
+
+        var peer = StartReceiver();
+
+        // Both sides are this same assembly, so the offered version equals the installed one -
+        // "not newer" is exactly the rule under test.
+        var result = await new LanClient(_sender.Config).PushUpdateAsync(peer, exe, "Ryan");
+
+        Assert.False(result.Sent);
+        Assert.Contains("already on", result.Message);
+    }
+
+    [Fact]
+    public async Task A_program_that_does_not_match_its_checksum_is_thrown_away()
+    {
+        // The bytes are checked before anything is put anywhere it could be run. A file that fails
+        // is deleted rather than kept: for an executable there is no sensible "just in case".
+        var ws = new Workspace(_receiver.Location.UserDataRoot);
+        var wrong = new MemoryStream(new byte[] { 9, 9, 9, 9, 9, 9, 9, 9 });
+
+        var staged = await RemoteUpdate.ReceiveAsync(ws, wrong, 8, "not-the-right-hash");
+
+        Assert.Null(staged);
+        Assert.False(File.Exists(Path.Combine(ws.Staging, RemoteUpdate.StagedName)));
+    }
+
+    [Fact]
+    public async Task A_program_that_matches_its_checksum_is_kept()
+    {
+        var ws = new Workspace(_receiver.Location.UserDataRoot);
+        var payload = new byte[] { 10, 20, 30, 40, 50 };
+
+        var source = Path.Combine(_sender.Root, "good.exe");
+        File.WriteAllBytes(source, payload);
+        var sha = RemoteUpdate.Sha256Of(source);
+
+        var staged = await RemoteUpdate.ReceiveAsync(ws, new MemoryStream(payload), payload.Length, sha);
+
+        Assert.NotNull(staged);
+        Assert.Equal(payload, File.ReadAllBytes(staged!));
+    }
+
+    [Fact]
+    public async Task A_transfer_that_stops_half_way_is_not_treated_as_a_program()
+    {
+        // An incomplete program is not a program. The declared length is what makes a short read
+        // detectable at all.
+        var ws = new Workspace(_receiver.Location.UserDataRoot);
+        var half = new MemoryStream(new byte[] { 1, 2, 3 });
+
+        var staged = await RemoteUpdate.ReceiveAsync(ws, half, declaredBytes: 100, "any-hash");
+
+        Assert.Null(staged);
+    }
 }

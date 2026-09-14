@@ -122,10 +122,21 @@ public static class Installer
     /// Copies this program into the user's own folder and sets it to start with Windows.
     /// Needs no administrator rights: everything it touches belongs to the current user.
     /// </summary>
-    public static void Install()
+    public static void Install() => InstallFrom(
+        Environment.ProcessPath
+        ?? throw new InvalidOperationException("Cannot work out where this program is running from."));
+
+    /// <summary>
+    /// Puts a particular program file in place as the installed copy.
+    ///
+    /// Split out from Install so a program that arrived over the network can be installed the same
+    /// way as the one currently running - same stop, same move-aside, same startup entry. One path
+    /// means one set of behaviour to get right.
+    /// </summary>
+    public static void InstallFrom(string source)
     {
-        var source = Environment.ProcessPath
-                     ?? throw new InvalidOperationException("Cannot work out where this program is running from.");
+        if (!File.Exists(source))
+            throw new FileNotFoundException("That program file is not there.", source);
 
         Directory.CreateDirectory(InstallDir);
 

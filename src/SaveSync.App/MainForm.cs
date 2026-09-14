@@ -211,6 +211,7 @@ public sealed class MainForm : Form
         _links.Add(MakeLink("Not you?", SwitchProfile));
         _links.Add(MakeLink("Backups", ShowBackups));
         _links.Add(MakeLink("What it has been doing", ShowActivityLog));
+        _links.Add(MakeLink("Check the other PC", AskThePeer));
         _links.Add(MakeLink("Use a different drive", ChooseStick));
         _links.Add(MakeLink("Find my saves", ChooseSavesFolder));
         foreach (var l in _links) Controls.Add(l);
@@ -419,6 +420,7 @@ public sealed class MainForm : Form
 
         _server = new LanServer(_config, () => _engine);
         _server.PackageArrived += OnPackageArrived;
+        _server.UpdateStaged += OnUpdateStaged;
         _server.Start();
 
         _discovery = new Discovery(_config)
@@ -602,6 +604,46 @@ public sealed class MainForm : Form
         }
     }
 
+    /// <summary>
+    /// A newer program has arrived from the other PC and has already been checked.
+    ///
+    /// Put in place immediately rather than offered, because this only ever happens on a machine
+    /// whose owner switched remote updating on - having said yes once to the arrangement, being
+    /// asked again every time is just the nuisance they were trying to avoid. It is announced, not
+    /// hidden, and only the program changes.
+    /// </summary>
+    private void OnUpdateStaged(string stagedExe, string version)
+    {
+        if (IsDisposed || !IsHandleCreated) return;
+        BeginInvoke(() =>
+        {
+            try
+            {
+                Installer.InstallFrom(stagedExe);
+                ActivityLog.Write($"installed the update to {version} that arrived over the network");
+
+                // Honest about when it takes effect: the copy running right now is still the old
+                // one, because a program cannot replace itself underneath its own feet.
+                _tray.ShowBalloonTip(8000, "This PC has a newer version ready",
+                    $"Save Transfer {version} is installed and will be the one that runs from next "
+                    + "time this PC starts. Your saves and backups are untouched.",
+                    ToolTipIcon.Info);
+            }
+            catch (Exception ex)
+            {
+                ActivityLog.Write("could not install the update that arrived", ex);
+                _tray.ShowBalloonTip(8000, "Update did not go on",
+                    ex.Message + " The version already here still works.", ToolTipIcon.Warning);
+            }
+            finally
+            {
+                try { File.Delete(stagedExe); } catch (IOException) { }
+            }
+
+            Rebuild();
+        });
+    }
+
     private void OnPackageArrived(ReceivedPackage package)
     {
         if (IsDisposed || !IsHandleCreated) return;
@@ -724,6 +766,20 @@ public sealed class MainForm : Form
                 "Transfer straight to the other PC",
                 "Windows has to allow this once on this PC. It takes one click and is never asked again.",
                 ("Allow over the network", AllowNetwork))
+            {
+                Width = ClientSize.Width - PadX * 2 - 6,
+            });
+        }
+
+        // ---- the one permission that pairing never grants on its own ----
+        if (_config.UseNetwork && FirewallSetup.IsConfigured() && Installer.IsInstalled && !_config.AllowRemoteUpdate)
+        {
+            _notices.Controls.Add(new Banner(Severity.Info,
+                "Let the other PC update this program",
+                "So nobody has to carry the USB stick over just to install a newer version. This is "
+                + "the only thing the other PC cannot already do, because it means running a "
+                + "program it sent - so it is off until you say otherwise.",
+                ("Allow updates from the other PC", AllowRemoteUpdates))
             {
                 Width = ClientSize.Width - PadX * 2 - 6,
             });
@@ -936,6 +992,31 @@ public sealed class MainForm : Form
                 ex.Message + Environment.NewLine + Environment.NewLine
                 + "The older version is still installed and still works.");
         }
+
+        Rebuild();
+    }
+
+    private void AllowRemoteUpdates()
+    {
+        if (!Dialogs.Confirm(this, "Allow updates from the other PC",
+                "The other PC will be able to replace the Save Transfer program on this one with a "
+                + "newer version, without anybody sitting here."
+                + Environment.NewLine + Environment.NewLine
+                + "Only a newer version is accepted, and only if it arrives intact - it is checked "
+                + "against a checksum before anything is put in place. Your saves and backups are "
+                + "never touched by it."
+                + Environment.NewLine + Environment.NewLine
+                + "Say no if you would rather carry the stick over.",
+                "Allow it"))
+            return;
+
+        _config.AllowRemoteUpdate = true;
+        try { _config.Save(); } catch (IOException) { }
+        ActivityLog.Write("this PC now accepts program updates over the network");
+
+        Dialogs.Info(this, "Allowed",
+            "This PC will take newer versions from the other one. You can still update it by hand "
+            + "from the stick any time.");
 
         Rebuild();
     }
@@ -1321,6 +1402,86 @@ public sealed class MainForm : Form
             Dialogs.Warn(this, "Could not open it", ex.Message + Environment.NewLine + Environment.NewLine + path);
         }
     }
+
+    /// <summary>
+    /// Asks the other PC what it has been doing, and offers to hand it this version.
+    ///
+    /// The point of both: a machine somewhere else in the house can be looked at and brought up to
+    /// date without walking over to it, or carrying a stick to it.
+    /// </summary>
+    private void AskThePeer()
+    {
+        var peer = _news.Select(n => n.Peer).FirstOrDefault();
+        if (peer is null || _watcher is null)
+        {
+            Dialogs.Info(this, "No other PC right now",
+                "Nothing has answered on this network. The other PC may be off, asleep, or not "
+                + "have the program running.");
+            return;
+        }
+
+        var fetched = WorkDialog.Run(this, "Asking the other PC", $"Asking {peer.Label}...",
+            (_, ct) => new LanClient(_config).GetLogAsync(peer, _profile.Name, ct).GetAwaiter().GetResult());
+
+        if (fetched is null)
+        {
+            Dialogs.Warn(this, "No answer", $"{peer.Label} did not answer.");
+            return;
+        }
+
+        // Keep it, so it can be read properly rather than squinted at in a message box.
+        string? saved = null;
+        try
+        {
+            var dir = _engine is not null ? _engine.Workspace.Logs : Path.GetTempPath();
+            Directory.CreateDirectory(dir);
+            saved = Path.Combine(dir, PathUtil.Sanitize(fetched.Label) + ".log");
+            File.WriteAllText(saved, fetched.Text);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { saved = null; }
+
+        var theirVersion = fetched.ToolVersion;
+        bool canOffer = Version.TryParse(theirVersion, out var theirs)
+                        && theirs < Installer.ThisVersion;
+
+        var summary = $"{peer.Label} is running version "
+                      + (string.IsNullOrWhiteSpace(theirVersion) ? "(unknown)" : theirVersion) + "."
+                      + Environment.NewLine + Environment.NewLine
+                      + (saved is not null
+                          ? "Its log has been saved here:" + Environment.NewLine + saved
+                          : "Its log could not be saved on this PC.");
+
+        if (!canOffer)
+        {
+            Dialogs.Info(this, "The other PC", summary);
+            return;
+        }
+
+        if (!Dialogs.Confirm(this, "The other PC",
+                summary + Environment.NewLine + Environment.NewLine
+                + $"This PC is on {Installer.ThisVersion}. Send it this version?"
+                + Environment.NewLine + Environment.NewLine
+                + "That PC has to have been set to accept updates, and it will say so if it has not.",
+                "Send the update"))
+            return;
+
+        var exe = Environment.ProcessPath;
+        if (exe is null) return;
+
+        var sent = WorkDialog.Run(this, "Sending the program", $"Sending to {peer.Label}...",
+            (_, ct) =>
+            {
+                var r = new LanClient(_config).PushUpdateAsync(peer, exe, _profile.Name, ct).GetAwaiter().GetResult();
+                return new SendOutcome(r.Sent, r.Message);
+            });
+
+        if (sent is null) return;
+        if (sent.Ok) Dialogs.Info(this, "Sent", sent.Message);
+        else Dialogs.Warn(this, "Not sent", sent.Message);
+    }
+
+    /// <summary>A class, not a tuple, so "the user cancelled" can be told from "it failed".</summary>
+    private sealed record SendOutcome(bool Ok, string Message);
 
     private void ShowBackups()
     {

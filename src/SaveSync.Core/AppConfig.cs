@@ -61,6 +61,17 @@ public sealed class AppConfig
 
     public int LanPort { get; set; } = 47365;
 
+    /// <summary>
+    /// Let the other PC replace the program on this one.
+    ///
+    /// Off, and it takes a deliberate act to turn on, because it is a different kind of permission
+    /// from everything else here. Pairing happens automatically and without asking anybody, which
+    /// is fine while the worst a peer can do is offer a save this machine's own engine then judges
+    /// for itself - and is emphatically not fine if a peer can hand over a program to run. So this
+    /// is the one thing that is never granted by pairing alone.
+    /// </summary>
+    public bool AllowRemoteUpdate { get; set; }
+
     /// <summary>Transfer over the network when the other PC is reachable, instead of the stick.</summary>
     public bool UseNetwork { get; set; } = true;
 

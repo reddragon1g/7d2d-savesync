@@ -106,7 +106,10 @@ public sealed class LanRequest
 {
     public int Version { get; set; } = LanProtocol.Version;
 
-    /// <summary>hello | pair | list-saves | request-send | push-begin | push-file | push-commit | push-abort</summary>
+    /// <summary>
+    /// hello | pair | list-saves | request-send | push-begin | push-file | push-commit |
+    /// push-abort | get-log | update-offer | update-file | update-commit
+    /// </summary>
     public string Op { get; set; } = "";
 
     /// <summary>Shared secret agreed at pairing. Absent for hello and pair.</summary>
@@ -136,6 +139,10 @@ public sealed class LanRequest
     /// </summary>
     public string? World { get; set; }
     public string? SaveName { get; set; }
+
+    // update-offer: what is being offered, so the far side can refuse before a byte is sent.
+    public string? OfferedVersion { get; set; }
+    public string? OfferedSha256 { get; set; }
     public int FileCount { get; set; }
     public long TotalBytes { get; set; }
 
@@ -181,6 +188,12 @@ public sealed class LanResponse
 
     /// <summary>Serialised list of PeerSave, for list-saves.</summary>
     public string? SavesJson { get; set; }
+
+    /// <summary>get-log: that machine's own account of what it has been doing.</summary>
+    public string? LogText { get; set; }
+
+    /// <summary>What that machine calls itself, so its log can be filed under a name.</summary>
+    public string? LogLabel { get; set; }
 
     // push-commit results
     public bool Applied { get; set; }

@@ -17,6 +17,14 @@ public sealed class LanPeer
     public bool IsFresh => DateTimeOffset.UtcNow - LastSeen < TimeSpan.FromSeconds(12);
 }
 
+/// <summary>What another PC says about itself when asked.</summary>
+public sealed class PeerReport
+{
+    public required string Label { get; init; }
+    public required string Text { get; init; }
+    public string ToolVersion { get; init; } = "";
+}
+
 public sealed class SendResult
 {
     public bool Sent { get; init; }
@@ -98,6 +106,132 @@ public sealed class LanClient
     }
 
     /// <summary>Asks what the other PC is holding, without moving any save data.</summary>
+    /// <summary>
+    /// Asks another PC what it has been doing, and gets its log back.
+    ///
+    /// The whole reason this exists: a machine you cannot walk over to can be asked to account for
+    /// itself. Read-only and harmless - the same text somebody sitting at that PC can open from
+    /// its own window.
+    /// </summary>
+    public async Task<PeerReport?> GetLogAsync(
+        LanPeer peer, string senderName, CancellationToken ct = default)
+    {
+        if (!await EnsurePairedAsync(peer, senderName, ct).ConfigureAwait(false)) return null;
+        var secret = _config.FindPeer(peer.MachineId)?.Secret;
+        if (secret is null) return null;
+
+        try
+        {
+            using var client = await ConnectAsync(peer.Address, peer.Port, ct).ConfigureAwait(false);
+            await using var stream = client.GetStream();
+
+            await LanProtocol.WriteMessageAsync(stream, new LanRequest
+            {
+                Op = "get-log",
+                Secret = secret,
+                MachineId = _config.MachineId,
+                DisplayName = _config.DisplayName,
+                SenderName = senderName,
+            }, ct: ct).ConfigureAwait(false);
+
+            var response = await LanProtocol.ReadHeaderAsync<LanResponse>(stream, ct).ConfigureAwait(false);
+            if (response is null || !response.Ok) return null;
+
+            return new PeerReport
+            {
+                Label = response.LogLabel ?? peer.Label,
+                Text = response.LogText ?? "",
+                ToolVersion = response.ToolVersion ?? "",
+            };
+        }
+        catch (Exception e) when (e is IOException or SocketException or OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Offers this program to another PC and, if it says yes, sends it.
+    ///
+    /// Two steps on purpose. The offer names the version and the checksum, so a machine that does
+    /// not want it - or already has it, or has not been told to accept updates at all - says so
+    /// before sixty megabytes cross the network. The answer is the far side's to give.
+    /// </summary>
+    public async Task<(bool Sent, string Message)> PushUpdateAsync(
+        LanPeer peer, string exePath, string senderName, CancellationToken ct = default)
+    {
+        if (!File.Exists(exePath)) return (false, "The program file could not be found.");
+
+        if (!await EnsurePairedAsync(peer, senderName, ct).ConfigureAwait(false))
+            return (false, $"Could not reach {peer.Label}.");
+
+        var secret = _config.FindPeer(peer.MachineId)?.Secret;
+        if (secret is null) return (false, $"Not paired with {peer.Label}.");
+
+        string sha;
+        long size;
+        try
+        {
+            sha = RemoteUpdate.Sha256Of(exePath);
+            size = new FileInfo(exePath).Length;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return (false, "Could not read the program file: " + e.Message);
+        }
+
+        var version = RemoteUpdate.RunningVersion.ToString();
+
+        try
+        {
+            // Ask first.
+            using (var ask = await ConnectAsync(peer.Address, peer.Port, ct).ConfigureAwait(false))
+            await using (var askStream = ask.GetStream())
+            {
+                await LanProtocol.WriteMessageAsync(askStream, new LanRequest
+                {
+                    Op = "update-offer",
+                    Secret = secret,
+                    MachineId = _config.MachineId,
+                    DisplayName = _config.DisplayName,
+                    SenderName = senderName,
+                    OfferedVersion = version,
+                    OfferedSha256 = sha,
+                }, ct: ct).ConfigureAwait(false);
+
+                var answer = await LanProtocol.ReadHeaderAsync<LanResponse>(askStream, ct).ConfigureAwait(false);
+                if (answer is null) return (false, $"{peer.Label} did not answer.");
+                if (!answer.Ok) return (false, answer.Error ?? "It was refused.");
+            }
+
+            // Then send.
+            using var client = await ConnectAsync(peer.Address, peer.Port, ct).ConfigureAwait(false);
+            await using var stream = client.GetStream();
+            await using var file = new FileStream(exePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+
+            await LanProtocol.WriteMessageAsync(stream, new LanRequest
+            {
+                Op = "update-file",
+                Secret = secret,
+                MachineId = _config.MachineId,
+                DisplayName = _config.DisplayName,
+                SenderName = senderName,
+                OfferedVersion = version,
+                OfferedSha256 = sha,
+                BodyBytes = size,
+            }, file, size, ct).ConfigureAwait(false);
+
+            var done = await LanProtocol.ReadHeaderAsync<LanResponse>(stream, ct).ConfigureAwait(false);
+            if (done is null || !done.Ok) return (false, done?.Error ?? "It did not arrive.");
+
+            return (true, done.Message ?? $"{peer.Label} has the update.");
+        }
+        catch (Exception e) when (e is IOException or SocketException or OperationCanceledException)
+        {
+            return (false, e.Message);
+        }
+    }
+
     public async Task<List<PeerSave>?> ListSavesAsync(LanPeer peer, string senderName, CancellationToken ct = default)
     {
         if (!await EnsurePairedAsync(peer, senderName, ct).ConfigureAwait(false)) return null;
