@@ -15,6 +15,7 @@ using SaveSync.Core;
 //   probe spawnreset [seconds] [who]                - give back the borrowed spawn-screen setting
 //   probe gpu <integrated|discrete|auto|back> [who] - which chip Windows gives the game
 //   probe gamelog [seconds] [who] [phrase]          - the GAME's own log, or a search through it
+//   probe pulse [seconds] [who]                     - watch the card 5x a second for a rhythm
 //   probe here                                      - the full machine report for THIS PC
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
@@ -57,6 +58,7 @@ try
         case "launchplan": Launch(Arg(1), Arg(2), dryRun: true); break;
         case "spawnreset": SpawnReset(int.TryParse(Arg(1), out var zw) ? zw : 8, Arg(2)); break;
         case "gpu": GpuPick(At(1), Arg(2)); break;
+        case "pulse": Pulse(int.TryParse(Arg(1), out var ps) ? ps : 20, Arg(2)); break;
         case "gamelog": PeerGameLog(int.TryParse(Arg(1), out var gw) ? gw : 10, Arg(2), Arg(3)); break;
         case "here": Console.WriteLine(MachineReport.Read(GamePaths.Discover()).Describe()); break;
         default:
@@ -498,6 +500,34 @@ void PeerGameLog(int seconds, string? who, string? find)
         var report = client.GetGameLogAsync(peer, "probe", default, find).GetAwaiter().GetResult();
         Console.WriteLine(report is null ? "  no answer." : report.Text);
         Console.WriteLine();
+    }
+}
+
+/// <summary>
+/// Watches another PC's graphics card several times a second and looks for a repeating cycle.
+///
+/// For a stutter that has a rhythm to it. Averages cannot see one: thirty seconds containing
+/// twenty hitches average out to thirty seconds containing none.
+/// </summary>
+void Pulse(int seconds, string? who)
+{
+    var config = AppConfig.Load();
+    using var discovery = new SaveSync.Core.Lan.Discovery(config) { PersonName = "probe" };
+    discovery.Start();
+    Thread.Sleep(TimeSpan.FromSeconds(10));
+
+    var peers = discovery.Peers
+        .Where(p => who is null || p.DisplayName.Contains(who, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    if (peers.Count == 0) { Console.WriteLine("no other PC answered."); return; }
+
+    var client = new SaveSync.Core.Lan.LanClient(config);
+    foreach (var peer in peers)
+    {
+        Console.WriteLine($"================ {peer.DisplayName} ================");
+        var report = client.GpuPulseAsync(peer, seconds, "probe").GetAwaiter().GetResult();
+        Console.WriteLine(report is null ? "  no answer." : report.Text);
     }
 }
 

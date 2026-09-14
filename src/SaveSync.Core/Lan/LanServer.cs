@@ -139,7 +139,7 @@ public sealed class LanServer : IDisposable
                         or "get-log" or "update-offer" or "update-file"
                         or "inbox-list" or "inbox-keep-both" or "restart" or "rename-save"
                         or "get-machine" or "game-stop" or "game-start" or "spawn-pref-reset"
-                        or "gpu-choice" or "get-game-log") return;
+                        or "gpu-choice" or "get-game-log" or "gpu-pulse") return;
                 }
             }
             catch (OperationCanceledException) { }
@@ -180,6 +180,7 @@ public sealed class LanServer : IDisposable
             "spawn-pref-reset" => SpawnPrefReset(request),
             "gpu-choice" => GpuChoiceOp(request),
             "get-game-log" => GetGameLog(request),
+            "gpu-pulse" => GpuPulseOp(request),
             "inbox-list" => InboxList(),
             "inbox-keep-both" => InboxKeepBoth(request),
             "restart" => Restart(request),
@@ -457,6 +458,45 @@ public sealed class LanServer : IDisposable
             ToolVersion = TransferEngine.ToolVersion,
             LogLabel = report.FileName,
             LogText = report.Describe(),
+        };
+    }
+
+    /// <summary>
+    /// Watches the graphics card several times a second and reports whether it repeats.
+    ///
+    /// For chasing a stutter that has a rhythm. Every other measurement here is an average over
+    /// thirty seconds, and thirty seconds containing twenty hitches average out to no hitches at
+    /// all - so a periodic fault is precisely what nothing else can see.
+    /// </summary>
+    private LanResponse GpuPulseOp(LanRequest request)
+    {
+        var seconds = request.FileCount > 0 ? request.FileCount : 20;
+        ActivityLog.Write($"asked by {request.DisplayName} to watch for a rhythm for {seconds}s");
+
+        // Both halves, because the answer to "what is the rhythm" is usually that one of them has
+        // it and the other does not - and knowing which is the whole finding.
+        var card = GpuPulse.Sample(seconds);
+        var game = GpuPulse.SampleGame(seconds);
+
+        if (card is null && game is null)
+            return LanResponse.Fail("Nothing to watch - no NVIDIA card and the game is not running.");
+
+        var text = new List<string>();
+
+        text.Add("======== the graphics card ========");
+        text.Add(card?.Describe() ?? "(no NVIDIA card on this PC)");
+        text.Add("");
+        text.Add("======== the game itself ========");
+        text.Add(game?.Describe() ?? "(the game is not running on this PC)");
+
+        return new LanResponse
+        {
+            Ok = true,
+            MachineId = _config.MachineId,
+            DisplayName = _config.DisplayName,
+            ToolVersion = TransferEngine.ToolVersion,
+            LogLabel = "pulse",
+            LogText = string.Join(Environment.NewLine, text),
         };
     }
 

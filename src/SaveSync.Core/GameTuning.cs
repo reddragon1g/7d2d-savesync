@@ -180,6 +180,62 @@ public static class GameTuning
         new("OptionsGfxViewDistance", "5", "the shortest view distance the game offers"),
     };
 
+    public const string Steady = "steady";
+
+    /// <summary>
+    /// Half scale, with the lighting kept. The profile written after getting it wrong twice.
+    ///
+    /// Two attempts at a middle ground both failed, in opposite directions. The first turned the
+    /// shadows off to buy margin, and a world with no shadows in it reads as broken rather than
+    /// cheap - "there's something wrong with the lighting" was the report, and it was right. The
+    /// second put the shadows back AND raised textures to maximum on the reasoning that texture
+    /// memory is free when the constraint is heat. It is not: full-size mipmaps and sixteen-times
+    /// anisotropic filtering cost memory BANDWIDTH and texture fetches, every frame, and on a card
+    /// held at 300 MHz that is real work. It went straight back over the cliff.
+    ///
+    /// So this spends the margin on the thing that was actually missed. Shadows on, at the
+    /// cheapest tier that still draws them, which was this PC's own setting. Textures at the value
+    /// that was measured holding 30 fps rather than the value that was reasoned about. And the
+    /// render scale back to the half that is known - not assumed - to be on the safe side.
+    ///
+    /// Blurrier than anyone would like. But a soft picture with shadows in it looks like a game;
+    /// a sharp one without them looks broken.
+    /// </summary>
+    public static readonly Setting[] SteadyProfile =
+    {
+        new("OptionsGfxUpscalerMode", "4", "render below native and upscale"),
+        new("OptionsGfxDynamicScale", "0.5", "half scale - the one measured holding 30 fps at 21% busy"),
+        new("OptionsGfxVsync", "2", "lock to 30 fps, tear-free, for half the work of 60"),
+        new("OptionsGfxLimitFpsInGame", "30", "and a frame cap as well, for if vsync is ever turned off"),
+
+        // The lighting, back to this PC's own settings. This is what the margin is being spent on.
+        new("OptionsGfxShadowQuality", "1", "shadows ON at their cheapest tier - as this PC had them"),
+        new("OptionsGfxShadowDistance", "0", "close-range only, which is where the cost of shadows is"),
+        new("OptionsGfxOcclusion", "true", "contact shading back, as this PC had it"),
+        new("OptionsGfxSSReflections", "1", "screen-space reflections back, as this PC had them"),
+
+        // Measured values, not reasoned ones.
+        new("OptionsGfxTexQuality", "1", "textures one step down - the value measured at 30 fps"),
+        new("OptionsGfxTexFilter", "2", "filtering one step down, for the same reason"),
+        new("OptionsGfxObjQuality", "2", "object detail as this PC had it"),
+        new("OptionsGfxTerrainQuality", "2", "terrain as this PC had it"),
+        new("OptionsGfxTreeDistance", "2", "trees, but not to the horizon"),
+        new("OptionsGfxGrassDistance", "1", "some grass"),
+        new("OptionsGfxAA", "1", "a little anti-aliasing, which upscaling benefits from"),
+        new("OptionsGfxSignQuality", "2", "signs as this PC had them"),
+
+        // Genuinely expensive, and all already off on this machine.
+        new("OptionsGfxReflectQuality", "0", "no reflection probes - was already off here"),
+        new("OptionsGfxReflectShadows", "false", "no shadows in reflections - was already off here"),
+        new("OptionsGfxSSAO", "false", "no ambient occlusion - was already off here"),
+        new("OptionsGfxSunShafts", "false", "no sun shafts - was already off here"),
+        new("OptionsGfxBloom", "false", "no bloom - was already off here"),
+        new("OptionsGfxDOF", "false", "no depth of field - was already off here"),
+        new("OptionsGfxMotionBlur", "0", "no motion blur - was already off here"),
+        new("OptionsGfxWaterQuality", "0", "lowest water"),
+        new("OptionsGfxViewDistance", "5", "the shortest view distance the game offers"),
+    };
+
     public const string BaseFix = "basefix";
 
     /// <summary>
@@ -257,6 +313,7 @@ public static class GameTuning
         => string.Equals(name, LowHeat, StringComparison.OrdinalIgnoreCase) ? LowHeatProfile
          : string.Equals(name, Balanced, StringComparison.OrdinalIgnoreCase) ? BalancedProfile
          : string.Equals(name, Playable, StringComparison.OrdinalIgnoreCase) ? PlayableProfile
+         : string.Equals(name, Steady, StringComparison.OrdinalIgnoreCase) ? SteadyProfile
          : string.Equals(name, BaseFix, StringComparison.OrdinalIgnoreCase) ? BaseFixProfile
          : string.Equals(name, NoDymesh, StringComparison.OrdinalIgnoreCase) ? NoDymeshProfile
          : null;

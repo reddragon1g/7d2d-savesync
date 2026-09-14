@@ -59,6 +59,9 @@ public sealed class MachineReport
     /// <summary>Which save the game is in, read out of its own log. Empty when it has loaded none.</summary>
     public string LoadedSave { get; init; } = "";
 
+    /// <summary>Where the weight of the loaded save actually sits: wiring, base, terrain.</summary>
+    public string SaveWeight { get; init; } = "";
+
     /// <summary>
     /// Whether this PC is currently set to skip the spawn screen. Null when it has never been set.
     ///
@@ -141,6 +144,7 @@ public sealed class MachineReport
             LastLaunch = location is null ? "" : DescribeLastLaunch(location),
             LoadedSave = location is null ? "" : GameLauncher.ReadLoadedSave(location)?.Describe() ?? "",
             SpawnButtonSkipped = GameLauncher.SpawnButtonSkipped(),
+            SaveWeight = WeighLoadedSave(location),
             CpuPercent = load.CpuPercent,
             Busiest = load.Busiest,
             GameLoad = load.Game,
@@ -239,6 +243,12 @@ public sealed class MachineReport
             lines.Add("");
             lines.Add("Busiest right now (processor):");
             foreach (var proc in Busiest) lines.Add("  " + proc.Describe());
+        }
+
+        if (SaveWeight.Length > 0)
+        {
+            lines.Add("");
+            lines.Add(SaveWeight);
         }
 
         lines.Add("");
@@ -346,6 +356,17 @@ public sealed class MachineReport
             return "EAC is ON in practice, whatever the settings file says.";
 
         return null;
+    }
+
+    /// <summary>Where the weight of the save currently loaded sits, or nothing when none is.</summary>
+    private static string WeighLoadedSave(GameLocation? location)
+    {
+        if (location is null) return "";
+
+        var loaded = GameLauncher.ReadLoadedSave(location);
+        if (loaded is null || loaded.SaveName.Length == 0 || loaded.World.Length == 0) return "";
+
+        return SaveSync.Core.SaveWeight.Read(location, loaded.World, loaded.SaveName)?.Describe() ?? "";
     }
 
     /// <summary>Mods that came with a person rather than with the game, as readable lines.</summary>

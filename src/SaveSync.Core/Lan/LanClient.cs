@@ -332,6 +332,23 @@ public sealed class LanClient
         };
     }
 
+    /// <summary>Watches another PC's graphics card several times a second, hunting a rhythm.</summary>
+    public async Task<PeerReport?> GpuPulseAsync(
+        LanPeer peer, int seconds, string senderName, CancellationToken ct = default)
+    {
+        var response = await SimpleAsync(peer, "gpu-pulse", senderName, null, null, ct, fileCount: seconds)
+            .ConfigureAwait(false);
+
+        if (response is null || !response.Ok) return null;
+
+        return new PeerReport
+        {
+            Label = response.LogLabel ?? peer.Label,
+            Text = response.LogText ?? "",
+            ToolVersion = response.ToolVersion ?? "",
+        };
+    }
+
     /// <summary>Points another PC's game at one graphics chip or the other.</summary>
     public async Task<(bool Ok, string Message)> GpuChoiceAsync(
         LanPeer peer, string which, string senderName, CancellationToken ct = default)
@@ -378,7 +395,8 @@ public sealed class LanClient
     /// <summary>One request, one answer, no body. Shared by the small operations.</summary>
     private async Task<LanResponse?> SimpleAsync(
         LanPeer peer, string op, string senderName, string? inboxId, string? installAs, CancellationToken ct,
-        string? world = null, string? saveName = null, string? tune = null, string? gpu = null)
+        string? world = null, string? saveName = null, string? tune = null, string? gpu = null,
+        int fileCount = 0)
     {
         if (!await EnsurePairedAsync(peer, senderName, ct).ConfigureAwait(false)) return null;
         var secret = _config.FindPeer(peer.MachineId)?.Secret;
@@ -402,6 +420,7 @@ public sealed class LanClient
                 SaveName = saveName,
                 Tune = tune,
                 Gpu = gpu,
+                FileCount = fileCount,
             }, ct: ct).ConfigureAwait(false);
 
             return await LanProtocol.ReadHeaderAsync<LanResponse>(stream, ct).ConfigureAwait(false);
