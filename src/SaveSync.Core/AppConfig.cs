@@ -93,6 +93,25 @@ public sealed class AppConfig
     public bool AutoSendAfterPlay { get; set; }
 
     /// <summary>
+    /// Keep the two PCs level without anybody pressing anything.
+    ///
+    /// Off until asked for. It only ever moves a save when the answer is unambiguous - the same
+    /// rule a person gets offered a one-click button for - so switching it on cannot make a
+    /// decision that would otherwise have been put to somebody.
+    /// </summary>
+    public bool AutoSync { get; set; }
+
+    /// <summary>
+    /// How often to do a full comparison when nothing has happened, in minutes.
+    ///
+    /// Long on purpose. The full comparison asks the other PC to describe every save it holds,
+    /// which walks every file of every save; doing that on a timer is a background job nobody
+    /// asked for. The moments that matter - the other PC appearing, the game closing - are
+    /// noticed as they happen, and this is only the net underneath them.
+    /// </summary>
+    public int AutoSyncEveryMinutes { get; set; } = 120;
+
+    /// <summary>
     /// Backups retained per save. Zero - the default - keeps every one forever, so a backup only
     /// ever disappears because somebody deleted it in the Backups window. Set a number here only
     /// if disk space is genuinely short.

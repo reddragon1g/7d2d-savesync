@@ -51,6 +51,43 @@ both PCs know it and can tell which is newer on their own.
 If the network is not working, the USB stick does exactly the same job.
 
 
+LET IT DO IT ALL BY ITSELF (the good bit)
+-----------------------------------------
+Once both PCs have it installed and network access, a third button appears:
+
+  "Do it automatically"
+
+Press it on both PCs and you never touch it again. Whichever PC has the newer
+save sends it to the other on its own. Come home with the laptop, turn the
+desktop on, and by the time you sit down it is already done.
+
+It stays out of the way:
+  - It NEVER does anything while 7 Days to Die is open.
+  - The moment you close the game, it checks.
+  - The moment the other PC comes online, it checks.
+  - Otherwise it only has a proper look every couple of hours. In between it
+    just asks "are you there?", which costs nothing.
+  - Anything that was played on BOTH PCs still waits for you to choose. It will
+    never guess.
+
+The window always says when it last checked and what it did, so you never have
+to wonder whether it worked.
+
+
+TWO SAVES WITH THE SAME NAME
+----------------------------
+The game calls everyone's first world the same thing, so this comes up a lot.
+
+It works out by itself whether they are really the same game or two different
+ones, by reading the game's own files - the world, how many days have been
+played, who has played there, and what your character knows. A character never
+forgets anything, so if yours knows something the other copy has never heard
+of, they cannot be the same game, and it says so.
+
+When they are different you get a third option: "Keep both". It puts the
+incoming one next to yours under a new name and does not touch yours at all.
+
+
 WHAT NORMALLY HAPPENS AFTER THAT
 --------------------------------
   1. Play on the laptop, anywhere, even with no internet.

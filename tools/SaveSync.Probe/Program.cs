@@ -34,6 +34,7 @@ try
         case "export": Export(At(1), At(2)); break;
         case "play": Play(At(1), At(2), At(3)); break;
         case "inspect": Inspect(At(1), At(2)); break;
+        case "kinship": Kinship(At(1), At(2)); break;
         case "import": Import(At(1), At(2), Arg(3) ?? "apply"); break;
         default:
             Console.WriteLine($"unknown command: {cmd}");
@@ -56,6 +57,23 @@ GameLocation Locate(string userData)
        ?? throw new InvalidOperationException($"not a user data folder: {userData}");
 
 TransferEngine Engine(string userData) => new(new AppConfig { SnapshotsToKeep = 10 }, Locate(userData));
+
+void Kinship(string saveA, string saveB)
+{
+    var a = SaveEvidence.Read(saveA);
+    var b = SaveEvidence.Read(saveB);
+
+    Console.WriteLine($"A: {saveA}");
+    Console.WriteLine($"   {a.GameVersion}  world={a.WorldFingerprint}  {a.Describe()}");
+    Console.WriteLine($"B: {saveB}");
+    Console.WriteLine($"   {b.GameVersion}  world={b.WorldFingerprint}  {b.Describe()}");
+    Console.WriteLine();
+
+    var v = SaveKinship.Compare(a, b);
+    Console.WriteLine($"VERDICT: {v.Kind}");
+    Console.WriteLine($"  {v.Headline}");
+    foreach (var r in v.Reasons) Console.WriteLine($"    - {r}");
+}
 
 void Discover()
 {

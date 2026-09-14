@@ -49,6 +49,8 @@ public sealed class MainForm : Form
 
     private readonly NotifyIcon _tray = new();
     private readonly System.Windows.Forms.Timer _watchTimer = new();
+    private readonly AutoSyncState _autoState = new();
+    private AutoSyncTrigger _lastTrigger = AutoSyncTrigger.None;
     private readonly System.Windows.Forms.Timer _housekeeping = new();
     private bool _reallyClosing;
 
@@ -425,6 +427,36 @@ public sealed class MainForm : Form
             ReplyPort = _server.Port,
         };
         _watcher.NewsChanged += OnNewsChanged;
+
+        // The watcher pings every tick and only does the expensive comparison when this says so.
+        _watcher.ShouldCompare = () =>
+        {
+            var trigger = AutoSyncPolicy.Decide(
+                enabled: true,
+                gameRunning: GamePaths.IsGameRunning(),
+                peerPresent: true,                      // only asked when somebody answered
+                _autoState,
+                DateTimeOffset.UtcNow,
+                TimeSpan.FromMinutes(Math.Max(5, _config.AutoSyncEveryMinutes)));
+
+            if (trigger == AutoSyncTrigger.None) return false;
+
+            _autoState.LastFullCheck = DateTimeOffset.UtcNow;
+            _lastTrigger = trigger;
+            return true;
+        };
+
+        _watcher.PresenceChecked += present =>
+        {
+            // Feeds the policy the two facts it needs, on the cheap tick. Nothing is read from
+            // disk here beyond a process list.
+            if (!present)
+            {
+                AutoSyncPolicy.Decide(true, GamePaths.IsGameRunning(), false,
+                    _autoState, DateTimeOffset.UtcNow);
+            }
+        };
+
         _watcher.Start();
     }
 
@@ -445,6 +477,8 @@ public sealed class MainForm : Form
         {
             _news = news;
 
+            if (_config.AutoSync) { RunAutoSync(news); return; }
+
             var worth = news.Where(n => n.WorthFetching).ToList();
             if (worth.Count > 0)
             {
@@ -455,6 +489,97 @@ public sealed class MainForm : Form
 
             Rebuild();
         });
+    }
+
+    /// <summary>
+    /// Moves what can be moved without asking anybody.
+    ///
+    /// Only the unambiguous direction in each case, and the receiving machine still judges every
+    /// incoming package with its own engine - so this can never make a decision that would
+    /// otherwise have been put to a person. Anything that needs thinking about is left exactly
+    /// where it is, and said out loud rather than quietly skipped.
+    /// </summary>
+    private void RunAutoSync(IReadOnlyList<PeerNews> news)
+    {
+        var watcher = _watcher;
+        if (watcher is null || _busy) return;
+
+        var pull = news.Where(n => n.Direction == SyncDirection.ToPc).ToList();
+        var push = news.Where(n => n.Direction == SyncDirection.ToStick && n.Local is not null).ToList();
+        var stuck = news.Where(n => n.Direction == SyncDirection.Conflict).ToList();
+
+        if (pull.Count == 0 && push.Count == 0)
+        {
+            _autoState.LastResult = stuck.Count > 0
+                ? $"{stuck.Count} save{(stuck.Count == 1 ? "" : "s")} need you to choose"
+                : "both PCs match";
+            Rebuild();
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            var moved = new List<string>();
+
+            foreach (var item in pull)
+            {
+                try { if (await watcher.FetchAsync(item)) moved.Add(item.Display); }
+                catch (Exception e) when (e is IOException or System.Net.Sockets.SocketException) { }
+            }
+
+            foreach (var item in push)
+            {
+                try { if (await PushAsync(item)) moved.Add(item.Display); }
+                catch (Exception e) when (e is IOException or System.Net.Sockets.SocketException
+                                          or TransferBlockedException) { }
+            }
+
+            if (IsDisposed || !IsHandleCreated) return;
+            BeginInvoke(() =>
+            {
+                if (moved.Count > 0)
+                {
+                    _autoState.LastTransfer = DateTimeOffset.UtcNow;
+                    _autoState.LastResult = $"updated {string.Join(", ", moved)}";
+                    _tray.ShowBalloonTip(6000, "Saves brought up to date",
+                        string.Join(Environment.NewLine, moved.Select(m => "  " + m)), ToolTipIcon.Info);
+                }
+                else
+                {
+                    _autoState.LastResult = "nothing could be moved automatically";
+                }
+
+                if (stuck.Count > 0)
+                {
+                    _tray.ShowBalloonTip(8000, "Some saves need you",
+                        $"{stuck.Count} save{(stuck.Count == 1 ? "" : "s")} were played on both PCs. "
+                        + "Open Save Transfer to pick.", ToolTipIcon.Warning);
+                }
+
+                Rebuild();
+            });
+        });
+    }
+
+    /// <summary>Packages a save and sends it over. The far side decides whether to apply it.</summary>
+    private async Task<bool> PushAsync(PeerNews item)
+    {
+        var engine = _engine;
+        if (engine is null || item.Local is null) return false;
+
+        var outbox = Path.Combine(engine.Workspace.Staging, "auto-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(outbox);
+            var package = engine.Export(item.Local, outbox).PackageDir;
+            var sent = await new LanClient(_config).SendPackageAsync(item.Peer, package, _profile.Name);
+            return sent.Sent;
+        }
+        finally
+        {
+            try { PathUtil.DeleteTree(outbox); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
     }
 
     private void OnPackageArrived(ReceivedPackage package)
@@ -530,7 +655,9 @@ public sealed class MainForm : Form
         else if (!FirewallSetup.IsConfigured())
             _netLine.Text = "Network transfer: not switched on yet.";
         else if (peer is not null)
-            _netLine.Text = $"Other PC: {peer.Label}{Theme.Dot}connected";
+            _netLine.Text = $"Other PC: {peer.Label}{Theme.Dot}connected"
+                            + (_config.AutoSync ? Theme.Dot + "keeping both up to date by itself" : "")
+                            + AutoSyncStatus();
         else
             _netLine.Text = _server?.Running == true
                 ? "Other PC: not switched on right now."
@@ -577,6 +704,21 @@ public sealed class MainForm : Form
                 "Transfer straight to the other PC",
                 "Windows has to allow this once on this PC. It takes one click and is never asked again.",
                 ("Allow over the network", AllowNetwork))
+            {
+                Width = ClientSize.Width - PadX * 2 - 6,
+            });
+        }
+
+        // ---- offer the hands-off mode, once it can actually work ----
+        if (_config.UseNetwork && FirewallSetup.IsConfigured() && Installer.IsInstalled && !_config.AutoSync)
+        {
+            _notices.Controls.Add(new Banner(Severity.Info,
+                "Keep both PCs up to date by themselves",
+                "They already see each other. Switch this on and neither of you has to press "
+                + "anything: whichever PC has the newer save sends it across on its own. It never "
+                + "does it while the game is open, and anything that needs a decision still waits "
+                + "for you.",
+                ("Do it automatically", TurnOnAutoSync))
             {
                 Width = ClientSize.Width - PadX * 2 - 6,
             });
@@ -679,6 +821,20 @@ public sealed class MainForm : Form
         }
     }
 
+    /// <summary>
+    /// "last checked 20 minutes ago - both PCs match". Said out loud on purpose: the failure this
+    /// guards against is arriving somewhere and finding an old save, and the only thing worse than
+    /// that is the program having quietly believed it was fine.
+    /// </summary>
+    private string AutoSyncStatus()
+    {
+        if (_autoState.LastFullCheck is null) return "";
+
+        var line = Theme.Dot + "last checked " + Theme.Ago(_autoState.LastFullCheck.Value);
+        if (!string.IsNullOrWhiteSpace(_autoState.LastResult)) line += Theme.Dot + _autoState.LastResult;
+        return line;
+    }
+
     private static string Describe(IEnumerable<SyncItem> items)
     {
         var list = items.ToList();
@@ -696,6 +852,30 @@ public sealed class MainForm : Form
     }
 
     // ------------------------------------------------------------------ actions
+
+    private void TurnOnAutoSync()
+    {
+        if (!Dialogs.Confirm(this, "Keep both PCs up to date automatically",
+                "From now on, whichever PC has the newer save will send it to the other by itself."
+                + Environment.NewLine + Environment.NewLine
+                + "It only ever moves a save when there is one obvious answer - the same rule that "
+                + "lights up the orange button. Anything that was played on both PCs still waits "
+                + "for you to choose, and nothing happens at all while the game is open."
+                + Environment.NewLine + Environment.NewLine
+                + "Everything replaced is still kept as a backup you can put back.",
+                "Yes, do it automatically"))
+            return;
+
+        _config.AutoSync = true;
+        try { _config.Save(); } catch (IOException) { }
+
+        Dialogs.Info(this, "Switched on",
+            "You can leave it alone now. Do the same on the other PC and neither of you has to "
+            + "think about it again.");
+
+        RefreshNetwork();
+        Rebuild();
+    }
 
     private void AllowNetwork()
     {

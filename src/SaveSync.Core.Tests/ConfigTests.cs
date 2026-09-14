@@ -186,4 +186,86 @@ public class ConfigTests : IDisposable
         cfg.UpgradeFromOlderVersion();
         Assert.Equal(3, cfg.SnapshotsToKeep);
     }
+
+    // ---------------------------------------------------------------- automatic syncing
+
+    private static AutoSyncTrigger Decide(bool enabled, bool game, bool peer, AutoSyncState st,
+        DateTimeOffset now, TimeSpan? beat = null)
+        => AutoSyncPolicy.Decide(enabled, game, peer, st, now, beat);
+
+    [Fact]
+    public void Nothing_happens_automatically_until_it_is_switched_on()
+    {
+        Assert.False(new AppConfig().AutoSync);
+        var st = new AutoSyncState();
+        Assert.Equal(AutoSyncTrigger.None, Decide(false, false, true, st, DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
+    public void It_never_runs_while_the_game_is_running()
+    {
+        // The one absolute. A save being written by the game must never be copied, and during a
+        // session there is nothing useful to do anyway.
+        var st = new AutoSyncState { LastFullCheck = DateTimeOffset.UtcNow - TimeSpan.FromDays(7) };
+        Assert.Equal(AutoSyncTrigger.None, Decide(true, true, true, st, DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
+    public void Closing_the_game_prompts_a_check()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var st = new AutoSyncState();
+
+        Decide(true, game: true, peer: true, st, now);                       // playing
+        var t = Decide(true, game: false, peer: true, st, now);              // just quit
+
+        Assert.Equal(AutoSyncTrigger.GameClosed, t);
+    }
+
+    [Fact]
+    public void The_other_pc_coming_online_prompts_a_check()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var st = new AutoSyncState { LastFullCheck = now };
+
+        Decide(true, false, peer: false, st, now);                 // they are off
+        Assert.Equal(AutoSyncTrigger.PeerArrived, Decide(true, false, peer: true, st, now));
+    }
+
+    [Fact]
+    public void Nothing_happens_when_the_other_pc_is_off()
+    {
+        var st = new AutoSyncState();
+        Assert.Equal(AutoSyncTrigger.None, Decide(true, false, peer: false, st, DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
+    public void A_quiet_pair_of_PCs_is_checked_only_on_the_slow_heartbeat()
+    {
+        // Both on, nothing happening. This must not turn into a constant background job.
+        var now = DateTimeOffset.UtcNow;
+        var st = new AutoSyncState { LastFullCheck = now, PeerWasPresent = true };
+        var beat = TimeSpan.FromHours(2);
+
+        Assert.Equal(AutoSyncTrigger.None, Decide(true, false, true, st, now + TimeSpan.FromMinutes(1), beat));
+        Assert.Equal(AutoSyncTrigger.None, Decide(true, false, true, st, now + TimeSpan.FromMinutes(90), beat));
+        Assert.Equal(AutoSyncTrigger.Heartbeat, Decide(true, false, true, st, now + TimeSpan.FromMinutes(121), beat));
+    }
+
+    [Fact]
+    public void A_session_of_play_does_not_queue_up_a_burst_of_checks_afterwards()
+    {
+        // Every tick during a two-hour session is a None, and quitting yields exactly one check -
+        // not one per tick that was skipped.
+        var start = DateTimeOffset.UtcNow;
+        var st = new AutoSyncState { LastFullCheck = start, PeerWasPresent = true };
+
+        for (int minute = 0; minute < 120; minute++)
+            Assert.Equal(AutoSyncTrigger.None, Decide(true, true, true, st, start + TimeSpan.FromMinutes(minute)));
+
+        var after = start + TimeSpan.FromMinutes(120);
+        Assert.Equal(AutoSyncTrigger.GameClosed, Decide(true, false, true, st, after));
+        st.LastFullCheck = after;
+        Assert.Equal(AutoSyncTrigger.None, Decide(true, false, true, st, after + TimeSpan.FromSeconds(30)));
+    }
 }

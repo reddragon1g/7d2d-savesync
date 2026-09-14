@@ -17,6 +17,16 @@ public enum ImportChoice
 
     /// <summary>Leave this machine alone.</summary>
     KeepLocal,
+
+    /// <summary>
+    /// Keep both: install the incoming copy beside the existing one under a different name.
+    ///
+    /// The way out of a name clash that is not a choice between two games. The new copy gets a
+    /// fresh identity rather than inheriting the incoming one, because from this moment it is a
+    /// separate save with a separate future and sharing an id would make every later comparison
+    /// between them wrong.
+    /// </summary>
+    InstallAsNewSave,
 }
 
 public sealed class ExportResult
@@ -61,6 +71,47 @@ public sealed class ImportPlan
     /// otherwise safe.
     /// </summary>
     public ModPlan Mods { get; init; } = new();
+
+    /// <summary>
+    /// What the game's own files say about whether these two same-named saves are the same game.
+    /// Only worked out when it matters - that is, when a person has to decide something.
+    /// </summary>
+    public KinshipVerdict? Kinship { get; set; }
+
+    /// <summary>Set to install beside the existing save under this name instead of replacing it.</summary>
+    public string? InstallAsName { get; set; }
+
+    /// <summary>
+    /// A name that is free right now, for the "keep both" option. Built from who it came from
+    /// rather than a number, because "My Game (from Chris)" says which one it is and "My Game 2"
+    /// says nothing at all.
+    /// </summary>
+    public string SuggestedNewName()
+    {
+        var parent = Path.GetDirectoryName(TargetFolder) ?? "";
+        var from = string.IsNullOrWhiteSpace(Info.CreatedBy) ? "other PC" : Info.CreatedBy;
+
+        // A machine identity can arrive as MACHINE\\user; only the person part is worth showing.
+        var slash = from.LastIndexOf('\\');
+        if (slash >= 0 && slash < from.Length - 1) from = from[(slash + 1)..];
+
+        var baseName = PathUtil.Sanitize($"{Info.Passport.SaveName} (from {from})");
+        if (!Directory.Exists(Path.Combine(parent, baseName))) return baseName;
+
+        for (int n = 2; n < 100; n++)
+        {
+            var candidate = PathUtil.Sanitize($"{Info.Passport.SaveName} (from {from}) {n}");
+            if (!Directory.Exists(Path.Combine(parent, candidate))) return candidate;
+        }
+
+        return PathUtil.Sanitize($"{Info.Passport.SaveName} {Guid.NewGuid().ToString("N")[..6]}");
+    }
+
+    /// <summary>Where the save will actually land, once any rename is taken into account.</summary>
+    public string EffectiveTargetFolder
+        => string.IsNullOrWhiteSpace(InstallAsName)
+            ? TargetFolder
+            : Path.Combine(Path.GetDirectoryName(TargetFolder) ?? "", PathUtil.Sanitize(InstallAsName!));
 
     public bool HasBlockers => Findings.Any(f => f.Severity == Severity.Blocker);
 
@@ -424,6 +475,22 @@ public sealed class TransferEngine
             Mods = modPlan,
         };
 
+        // Only when it matters. Reading the evidence means opening the world file, the player list
+        // and every shared character file, which is not work to do on a transfer nobody has to
+        // think about.
+        if (plan.NeedsHumanChoice && local is not null)
+        {
+            var verdict = SaveKinship.Compare(
+                SaveEvidence.Read(local.Folder),
+                SaveEvidence.Read(PackageLayout.Payload(packageDir)));
+
+            plan.Kinship = verdict;
+
+            plan.Findings.Add(new Finding(
+                verdict.ProvenDifferent ? Severity.Warning : Severity.Info,
+                verdict.Headline + (verdict.Reasons.Count > 0 ? " " + string.Join(" ", verdict.Reasons) : "")));
+        }
+
         // Mods are reported, never used to block: they are additive and undoable, a save is not.
         int missing = modPlan.ToInstall.Count();
         if (missing > 0 && !modPlan.FilesAvailable)
@@ -541,6 +608,22 @@ public sealed class TransferEngine
         if (choice == ImportChoice.Apply && plan.NeedsHumanChoice)
             throw new InvalidOperationException("This transfer needs an explicit decision before it can run.");
 
+        if (choice == ImportChoice.InstallAsNewSave)
+        {
+            if (string.IsNullOrWhiteSpace(plan.InstallAsName))
+                throw new InvalidOperationException("No name was given for the new save.");
+
+            // Keeping both means landing somewhere nothing lives. Anything else is a replacement
+            // wearing a different word, and replacements go through the path that takes backups.
+            if (Directory.Exists(plan.EffectiveTargetFolder))
+                throw new TransferBlockedException(new List<Finding>
+                {
+                    new(Severity.Blocker,
+                        $"There is already a save called \"{plan.InstallAsName}\" in {plan.Info.Passport.World}. "
+                        + "Pick a different name."),
+                });
+        }
+
         var result = new ImportResult();
         Workspace.EnsureCreated();
 
@@ -588,11 +671,15 @@ public sealed class TransferEngine
             // whereas a save swapped in without its mods is a world that will not load properly.
             InstallMods(plan, result, progress, ct);
 
+            // Everything below works on where the save will actually land, which is not the
+            // original folder when the user chose to keep both.
+            var target = plan.EffectiveTargetFolder;
+
             string? parked = null;
-            if (Directory.Exists(plan.TargetFolder))
+            if (Directory.Exists(target))
             {
                 parked = Snapshots.Park(
-                    plan.TargetFolder,
+                    target,
                     plan.Local?.Passport?.SaveId ?? plan.Info.Passport.SaveId,
                     plan.Info.Passport.World,
                     plan.Info.Passport.SaveName,
@@ -601,23 +688,36 @@ public sealed class TransferEngine
 
             try
             {
-                var parent = Path.GetDirectoryName(plan.TargetFolder);
+                var parent = Path.GetDirectoryName(target);
                 if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
-                FileOps.MoveTree(staging, plan.TargetFolder, ct);
+                FileOps.MoveTree(staging, target, ct);
             }
             catch
             {
                 // Put the original back before surfacing the failure.
                 if (parked is not null)
                 {
-                    try { PathUtil.DeleteTree(plan.TargetFolder); } catch (IOException) { }
+                    try { PathUtil.DeleteTree(target); } catch (IOException) { }
                     Snapshots.Unpark(parked);
                 }
                 throw;
             }
 
             var applied = plan.Info.Passport.Clone();
-            applied.Save(plan.TargetFolder);
+
+            if (choice == ImportChoice.InstallAsNewSave)
+            {
+                // A fresh identity, not the incoming one. From here these are two separate saves
+                // with separate futures; sharing an id would make every later comparison between
+                // them answer about the wrong save.
+                applied.SaveId = Ids.NewSaveId();
+                applied.VersionId = Ids.NewVersionId();
+                applied.Chain = new List<string>();
+                applied.Ordinal = 1;
+                applied.SaveName = PathUtil.Sanitize(plan.InstallAsName!);
+            }
+
+            applied.Save(target);
 
             SnapshotInfo? backup = null;
             if (parked is not null)

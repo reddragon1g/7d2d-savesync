@@ -71,11 +71,35 @@ public sealed class PeerWatcher : IDisposable
         => _client.RequestSendAsync(news.Peer, news.Remote.SaveId, ReplyPort, PersonName, ct,
             news.Remote.World, news.Remote.SaveName);
 
+    /// <summary>
+    /// Called before every tick to decide whether this one does a full comparison.
+    ///
+    /// Left to the caller because the answer depends on things this class has no business
+    /// knowing - whether the game is running, when the last check was, what the user has asked
+    /// for. Returning false is the cheap path and costs nothing at all.
+    /// </summary>
+    public Func<bool>? ShouldCompare { get; set; }
+
+    /// <summary>Raised on every tick with whether the other PC answered. Cheap; no save is read.</summary>
+    public event Action<bool>? PresenceChecked;
+
     private async Task LoopAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
-            try { await PollAsync(ct).ConfigureAwait(false); }
+            try
+            {
+                // The cheap half, every tick: is anybody there? This asks discovery, which is
+                // already listening, so it costs nothing on either machine.
+                bool present = _peerProvider().Any(p => p.IsFresh);
+                PresenceChecked?.Invoke(present);
+
+                // The expensive half only when something has actually changed. A full comparison
+                // asks the far side to describe every save it holds, which walks every file of
+                // every save - not something to do to somebody every fifteen seconds.
+                if (present && (ShouldCompare?.Invoke() ?? true))
+                    await PollAsync(ct).ConfigureAwait(false);
+            }
             catch (OperationCanceledException) { return; }
             catch (Exception e) when (e is IOException or System.Net.Sockets.SocketException)
             {

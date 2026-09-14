@@ -658,4 +658,94 @@ public class TransferTests : IDisposable
         // and never a block on an otherwise fine transfer.
         Assert.Equal("", SaveDiscovery.ReadGameVersionHint(_desktop.Location));
     }
+
+    // ---------------------------------------------------------------- keeping both
+
+    [Fact]
+    public void Keeping_both_installs_beside_the_existing_save_and_touches_nothing()
+    {
+        // Two people start a stock world and both accept the default name. Neither save is wrong
+        // and neither should have to lose, so the answer is not "which one" - it is "both".
+        _desktop.MakeSave(saveName: "My Game");
+        _laptop.MakeSave(saveName: "My Game", seed: 77);
+
+        var mine = Manifest.Build(_laptop.Slot(saveName: "My Game").Folder);
+        var pkg = _desktop.NewEngine().Export(_desktop.Slot(saveName: "My Game"), _stick).PackageDir;
+
+        var engine = _laptop.NewEngine();
+        var plan = engine.Inspect(pkg);
+        Assert.True(plan.NeedsHumanChoice);
+
+        plan.InstallAsName = "My Game (from Ryan)";
+        var result = engine.Import(plan, ImportChoice.InstallAsNewSave);
+
+        Assert.True(result.Applied);
+
+        // The original is untouched, byte for byte.
+        Assert.Empty(mine.Verify(_laptop.Slot(saveName: "My Game").Folder));
+
+        // And the incoming one is now a save in its own right.
+        var added = _laptop.Slot(saveName: "My Game (from Ryan)");
+        Assert.NotNull(added.Passport);
+        Assert.Equal("My Game (from Ryan)", added.Passport!.SaveName);
+    }
+
+    [Fact]
+    public void A_save_kept_alongside_gets_its_own_identity_not_a_shared_one()
+    {
+        // Sharing an id would make every later comparison between the two answer about the wrong
+        // save - the incoming copy's history would be claimed by a save that never lived it.
+        _desktop.MakeSave(saveName: "My Game");
+        _laptop.MakeSave(saveName: "My Game", seed: 77);
+
+        var pkg = _desktop.NewEngine().Export(_desktop.Slot(saveName: "My Game"), _stick).PackageDir;
+        var incomingId = PackageInfo.Load(pkg)!.Passport.SaveId;
+
+        var engine = _laptop.NewEngine();
+        var plan = engine.Inspect(pkg);
+        plan.InstallAsName = "Copy of My Game";
+        engine.Import(plan, ImportChoice.InstallAsNewSave);
+
+        var added = _laptop.Slot(saveName: "Copy of My Game");
+        Assert.NotEqual(incomingId, added.Passport!.SaveId);
+        Assert.Empty(added.Passport.Chain);
+        Assert.Equal(1, added.Passport.Ordinal);
+    }
+
+    [Fact]
+    public void Keeping_both_refuses_a_name_that_is_already_taken()
+    {
+        _desktop.MakeSave(saveName: "My Game");
+        _laptop.MakeSave(saveName: "My Game", seed: 77);
+        _laptop.MakeSave(saveName: "Taken", seed: 88);
+
+        var pkg = _desktop.NewEngine().Export(_desktop.Slot(saveName: "My Game"), _stick).PackageDir;
+
+        var engine = _laptop.NewEngine();
+        var plan = engine.Inspect(pkg);
+        plan.InstallAsName = "Taken";
+
+        Assert.Throws<TransferBlockedException>(() => engine.Import(plan, ImportChoice.InstallAsNewSave));
+
+        // And the save that was already called that is completely untouched.
+        Assert.NotNull(_laptop.Slot(saveName: "Taken"));
+    }
+
+    [Fact]
+    public void The_suggested_name_is_free_and_says_where_it_came_from()
+    {
+        _desktop.MakeSave(saveName: "My Game");
+        _laptop.MakeSave(saveName: "My Game", seed: 77);
+
+        var sender = _desktop.NewEngine();
+        sender.Identity = "Chris";
+        var pkg = sender.Export(_desktop.Slot(saveName: "My Game"), _stick).PackageDir;
+
+        var plan = _laptop.NewEngine().Inspect(pkg);
+        var suggested = plan.SuggestedNewName();
+
+        Assert.Contains("Chris", suggested);
+        Assert.False(Directory.Exists(Path.Combine(
+            Path.GetDirectoryName(plan.TargetFolder)!, suggested)));
+    }
 }

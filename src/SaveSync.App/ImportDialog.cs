@@ -20,6 +20,8 @@ public sealed class ImportDialog : Form
     private readonly ImportPlan _plan;
     private readonly ChoiceRow? _takeIncoming;
     private readonly ChoiceRow? _keepLocal;
+    private readonly ChoiceRow? _keepBoth;
+    private readonly TextBox? _newName;
     private readonly FlatButton _go;
     private readonly FlatButton _cancel = new("Cancel");
     private readonly bool _mustChoose;
@@ -98,10 +100,40 @@ public sealed class ImportDialog : Form
                 "Nothing is changed. The copy you brought over is left alone.");
             _keepLocal.SetBounds(PadX, y, inner, ChoiceRow.FixedHeight);
             Controls.Add(_keepLocal);
-            y += ChoiceRow.FixedHeight + 10;
+            y += ChoiceRow.FixedHeight + 8;
 
-            _takeIncoming.Chosen += (_, _) => { _keepLocal.Checked = false; UpdateGo(); };
-            _keepLocal.Chosen += (_, _) => { _takeIncoming.Checked = false; UpdateGo(); };
+            // The way out of a name clash that is not a choice between two games at all. Offered
+            // whenever there is something here to clash with, and put first in the eye when the
+            // two are provably different games, because then it is almost always the right answer.
+            if (plan.Local is not null)
+            {
+                _keepBoth = new ChoiceRow(
+                    "Keep both - install it under a different name",
+                    "Nothing on this PC is touched. The incoming save is added beside it.");
+                _keepBoth.SetBounds(PadX, y, inner, ChoiceRow.FixedHeight);
+                Controls.Add(_keepBoth);
+                y += ChoiceRow.FixedHeight + 6;
+
+                _newName = new TextBox
+                {
+                    Font = Theme.Body,
+                    BackColor = Theme.Surface,
+                    ForeColor = Theme.Text,
+                    BorderStyle = BorderStyle.FixedSingle,
+                    Text = plan.SuggestedNewName(),
+                    Enabled = false,
+                };
+                _newName.SetBounds(PadX + 34, y, inner - 34, 28);
+                Controls.Add(_newName);
+                y += 36;
+            }
+
+            y += 4;
+
+            _takeIncoming.Chosen += (_, _) => { _keepLocal.Checked = false; if (_keepBoth is not null) _keepBoth.Checked = false; UpdateGo(); };
+            _keepLocal.Chosen += (_, _) => { _takeIncoming.Checked = false; if (_keepBoth is not null) _keepBoth.Checked = false; UpdateGo(); };
+            if (_keepBoth is not null)
+                _keepBoth.Chosen += (_, _) => { _takeIncoming!.Checked = false; _keepLocal.Checked = false; UpdateGo(); };
 
             Add(new Label
             {
@@ -158,9 +190,15 @@ public sealed class ImportDialog : Form
 
         if (_mustChoose)
         {
-            bool picked = (_takeIncoming?.Checked ?? false) || (_keepLocal?.Checked ?? false);
-            _go.Enabled = picked;
-            _go.Text = (_keepLocal?.Checked ?? false) ? "Keep this PC's save" : "Continue";
+            bool keepBoth = _keepBoth?.Checked ?? false;
+            if (_newName is not null) _newName.Enabled = keepBoth;
+
+            bool picked = (_takeIncoming?.Checked ?? false) || (_keepLocal?.Checked ?? false) || keepBoth;
+            _go.Enabled = picked && !(keepBoth && string.IsNullOrWhiteSpace(_newName?.Text));
+
+            _go.Text = (_keepLocal?.Checked ?? false) ? "Keep this PC's save"
+                     : keepBoth ? "Keep both"
+                     : "Continue";
             return;
         }
 
@@ -177,6 +215,19 @@ public sealed class ImportDialog : Form
             {
                 Choice = ImportChoice.KeepLocal;
                 DialogResult = DialogResult.Cancel;
+                Close();
+                return;
+            }
+
+            if (_keepBoth?.Checked == true)
+            {
+                var name = (_newName?.Text ?? "").Trim();
+                if (name.Length == 0) return;
+
+                // Nothing is replaced, so there is nothing to warn about and nothing to confirm.
+                _plan.InstallAsName = name;
+                Choice = ImportChoice.InstallAsNewSave;
+                DialogResult = DialogResult.OK;
                 Close();
                 return;
             }
